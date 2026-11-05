@@ -408,15 +408,11 @@ def _clear_injected_hf() -> None:
 def save_provider(provider_id: str, fields: dict) -> dict:
     """Persist non-secret settings and, when sent, the API key.
 
-    Environment variables always win over the file. The raw key is not returned.
-    ``export_line`` is included only in this response, for the person who just
-    pasted the token, so they can mirror it in the shell.
+    Environment variables always win over the file. The raw key is never returned.
     """
     spec = get_spec(provider_id)
-    export_line = ""
 
     def mutate(state: dict) -> None:
-        nonlocal export_line
         current = dict(state["providers"].get(provider_id) or {})
         if fields.get("clear_api_key"):
             current.pop("api_key", None)
@@ -428,9 +424,6 @@ def save_provider(provider_id: str, fields: dict) -> dict:
             current["api_key"] = token
             if spec.id == "huggingface":
                 _inject_hf(token)
-                export_line = f"export HF_TOKEN={token}"
-            elif spec.env_keys:
-                export_line = f"export {spec.env_keys[0]}={token}"
         for name in ("base_url", "model", "project", "location"):
             if name in fields and fields[name] is not None:
                 current[name] = str(fields[name]).strip()
@@ -439,10 +432,7 @@ def save_provider(provider_id: str, fields: dict) -> dict:
         state["providers"][provider_id] = current
 
     update_state(mutate)
-    view = public_provider(provider_id)
-    if export_line:
-        view["export_line"] = export_line
-    return view
+    return public_provider(provider_id)
 
 
 def set_active_reasoner(provider_id: str) -> dict:

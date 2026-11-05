@@ -72,10 +72,10 @@ class StudioTest(unittest.TestCase):
     def test_saved_key_export_line_and_mask(self):
         from studio.providers import list_public_providers, save_provider
         saved = save_provider("huggingface", {"api_key": "hf_file_token_1234"})
-        self.assertEqual(saved["export_line"], "export HF_TOKEN=hf_file_token_1234")
+        self.assertNotIn("export_line", saved)
+        self.assertNotIn("hf_file_token_1234", json.dumps(saved))
         self.assertEqual(os.environ["HF_TOKEN"], "hf_file_token_1234")
         listed = next(item for item in list_public_providers()["providers"] if item["id"] == "huggingface")
-        self.assertNotIn("export_line", listed)
         self.assertNotIn("hf_file_token_1234", json.dumps(listed))
 
     def test_vertex_url(self):

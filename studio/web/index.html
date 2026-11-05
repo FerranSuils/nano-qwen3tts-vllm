@@ -202,8 +202,8 @@
     <section id="api">
       <div class="panel">
         <h2>Lo que ya había, más la voz diseñada</h2>
-        <pre class="export">export HF_TOKEN=&lt;YOUR_HUGGINGFACE_TOKEN&gt;
-export ANTHROPIC_API_KEY=&lt;YOUR_CLAUDE_API_KEY&gt;
+        <pre class="export">Las claves se definen en el servidor (HF_TOKEN, ANTHROPIC_API_KEY).
+La página no las muestra.
 
 curl -s http://127.0.0.1:8000/v1/providers
 curl -s -X POST http://127.0.0.1:8000/v1/voices/design \
@@ -239,7 +239,8 @@ curl -X POST http://127.0.0.1:8000/v1/audio/speech \
       try { body = text ? JSON.parse(text) : {}; } catch { body = { detail: text }; }
       if (!res.ok) {
         const detail = body.detail;
-        throw new Error(typeof detail === "string" ? detail : JSON.stringify(detail || res.status));
+        const message = typeof detail === "string" ? detail : JSON.stringify(detail || res.status);
+        throw new Error(message.replace(/hf_[A-Za-z0-9]+/g, "HF_TOKEN").replace(/export\s+HF_TOKEN=\S+/gi, "HF_TOKEN está en el servidor"));
       }
       return body;
     }
@@ -327,9 +328,8 @@ curl -X POST http://127.0.0.1:8000/v1/audio/speech \
           const secret = field("api_key").value.trim();
           if (secret) body.api_key = secret;
           const saved = await api("/v1/providers/" + id, { method: "PUT", body: JSON.stringify(body) });
-          const note = saved.export_line ? saved.export_line : "Guardado.";
           const workflow = saved.workflow ? " Workflow de Claude: " + saved.workflow.written + " archivos escritos." : "";
-          $("banner").textContent = note + workflow;
+          $("banner").textContent = "Guardado." + workflow;
           await loadProviders();
         } else if (button.dataset.action === "test") {
           msg.textContent = "Probando…";

@@ -259,21 +259,42 @@ def delete_voice(voice_id: str) -> bool:
     return True
 
 
+def reasoner_order(preferred: str | None = None) -> list[str]:
+    """Claude and Hugging Face when both are ready, preferred first."""
+    order = []
+    if preferred:
+        order.append(preferred)
+    for provider_id in ("claude", "huggingface"):
+        if provider_id not in order and providers.resolve(provider_id).ready:
+            order.append(provider_id)
+    if not order:
+        order.append(preferred or providers.active_reasoner_id())
+    return order
+
+
 def design_voice(brief: str, *, language: str | None = None, provider_id: str | None = None, save: bool = True) -> dict:
     brief = (brief or "").strip()
     if len(brief) < 3:
         raise VoiceError("Describe a la persona en una frase como mínimo")
-    provider_id = provider_id or providers.active_reasoner_id()
     hint = language or "Auto"
     user = f"Language hint: {hint}\n\nPerson:\n{brief}"
-    raw = providers.complete(
-        provider_id,
-        [
-            {"role": "system", "content": DESIGN_SYSTEM},
-            {"role": "user", "content": user},
-        ],
-    )
-    voice = parse_voice_payload(raw, provider=provider_id)
+    messages = [
+        {"role": "system", "content": DESIGN_SYSTEM},
+        {"role": "user", "content": user},
+    ]
+    raw = ""
+    used = ""
+    errors = []
+    for candidate in reasoner_order(provider_id):
+        try:
+            raw = providers.complete(candidate, messages)
+            used = candidate
+            break
+        except providers.ProviderError as exc:
+            errors.append(f"{candidate}: {exc}")
+    if not used:
+        raise VoiceError("; ".join(errors) or "Ningún proveedor pudo diseñar la voz")
+    voice = parse_voice_payload(raw, provider=used)
     if language and language in _LANGUAGES and language != "Auto":
         voice["language"] = language
     voice["brief"] = brief[:2000]
