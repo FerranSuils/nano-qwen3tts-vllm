@@ -36,6 +36,7 @@ class ProviderUpdate(BaseModel):
     model: str | None = None
     project: str | None = None
     location: str | None = None
+    workspace: str | None = None
     enabled: bool | None = None
     clear_api_key: bool = False
 

@@ -271,7 +271,7 @@ curl -X POST http://127.0.0.1:8000/v1/audio/speech \
         <input data-field="location" value="${esc(item.location || "us-central1")}" />` : "";
       const localOnly = item.ready && (item.auth === "none" || (item.auth === "optional" && !item.api_key_set));
       const pillClass = !item.ready ? "bad" : (localOnly ? "" : "ok");
-      const pillText = !item.ready ? "pendiente" : (localOnly ? "local" : "listo");
+      const pillText = !item.ready ? "pendiente" : (localOnly ? "local" : "clave");
       return `<article data-id="${esc(item.id)}">
         <div class="row" style="margin-top:0;justify-content:space-between">
           <strong>${esc(item.label)}</strong>
@@ -286,6 +286,7 @@ curl -X POST http://127.0.0.1:8000/v1/audio/speech \
         <label>URL base</label>
         <input data-field="base_url" value="${esc(item.base_url || "")}" placeholder="${esc(item.default_base_url || "https://…/v1")}" />
         ${project}
+        ${item.id === "claude" ? `<label>Workspace id (si la clave no está ligada a uno)</label><input data-field="workspace" value="${esc(item.workspace || "")}" placeholder="wrkspc_..." />` : ""}
         <label>Clave (vacío = no cambiar)</label>
         <input data-field="api_key" type="password" autocomplete="off" />
         <label><input type="checkbox" data-field="enabled" ${item.enabled ? "checked" : ""}/> Activado</label>
@@ -325,6 +326,8 @@ curl -X POST http://127.0.0.1:8000/v1/audio/speech \
           const location = field("location");
           if (project) body.project = project.value;
           if (location) body.location = location.value;
+          const workspace = field("workspace");
+          if (workspace) body.workspace = workspace.value;
           const secret = field("api_key").value.trim();
           if (secret) body.api_key = secret;
           const saved = await api("/v1/providers/" + id, { method: "PUT", body: JSON.stringify(body) });

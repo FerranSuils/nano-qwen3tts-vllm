@@ -374,6 +374,7 @@ def public_provider(provider_id: str) -> dict:
         "base_url": resolved.base_url,
         "project": resolved.project,
         "location": resolved.location,
+        "workspace": str(_stored(spec.id).get("workspace") or os.environ.get("ANTHROPIC_WORKSPACE_ID") or ""),
         "enabled": resolved.enabled,
         "api_key_set": bool(resolved.api_key),
         "api_key_hint": _hint(resolved.api_key),
@@ -424,7 +425,7 @@ def save_provider(provider_id: str, fields: dict) -> dict:
             current["api_key"] = token
             if spec.id == "huggingface":
                 _inject_hf(token)
-        for name in ("base_url", "model", "project", "location"):
+        for name in ("base_url", "model", "project", "location", "workspace"):
             if name in fields and fields[name] is not None:
                 current[name] = str(fields[name]).strip()
         if fields.get("enabled") is not None:
@@ -484,11 +485,15 @@ def _bearer_headers(resolved: Resolved) -> dict:
 
 
 def _anthropic_headers(resolved: Resolved) -> dict:
-    return {
+    headers = {
         "Content-Type": "application/json",
         "x-api-key": resolved.api_key,
         "anthropic-version": "2023-06-01",
     }
+    workspace = os.environ.get("ANTHROPIC_WORKSPACE_ID", "").strip() or str(_stored(resolved.spec.id).get("workspace") or "").strip()
+    if workspace:
+        headers["anthropic-workspace-id"] = workspace
+    return headers
 
 
 def test_provider(provider_id: str, timeout: float = 20.0) -> dict:
