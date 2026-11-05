@@ -23,6 +23,12 @@ class StudioTest(unittest.TestCase):
         os.environ.pop("HUGGING_FACE_HUB_TOKEN", None)
         os.environ.pop("ANTHROPIC_API_KEY", None)
         os.environ.pop("STUDIO_API_TOKEN", None)
+        os.environ.pop("BRAIN_OFFICE_API_KEY", None)
+        os.environ.pop("BRAIN_API_KEY", None)
+        os.environ.pop("TESTSPRITE_API_KEY", None)
+        os.environ.pop("TESTSPRITE_PROJECT_ID", None)
+        from studio import brain_office
+        brain_office.reset_cache()
         # Drop tokens injected by an earlier test in this process.
         from studio import providers
         for name in list(providers._injected_env):
@@ -181,6 +187,58 @@ class StudioTest(unittest.TestCase):
         self.assertEqual(allowed.status_code, 200)
         # The speech contract stays readable without the studio token.
         self.assertEqual(client.get("/v1/office/contract").status_code, 200)
+
+    def test_brain_team_becomes_the_roster_and_marks_qa(self):
+        from studio.brain_office import agents_from_team, is_qa_agent
+        payload = {
+            "departments": [{"prefix": "eng", "name": "Ingeniería"}],
+            "agents": [
+                {"key": "eng-qa", "alias": "Aina", "role": "prueba y define qué se testea", "department": "eng", "model_tier": "sonnet", "enabled": True, "removed": False},
+                {"key": "fin-jefe", "alias": "Marta", "role": "dirige la estrategia de financiación", "department": "fin", "model": "opus", "enabled": True, "removed": False},
+            ],
+        }
+        self.assertTrue(is_qa_agent(payload["agents"][0]))
+        self.assertFalse(is_qa_agent(payload["agents"][1]))
+        rows = agents_from_team(payload, [{"id": "eng-qa", "voice_id": "builtin-elena"}])
+        self.assertEqual(rows[0]["clave"], "Aina")
+        self.assertEqual(rows[0]["voice_id"], "builtin-elena")
+        self.assertTrue(rows[0]["qa"])
+        self.assertEqual(rows[0]["department"], "Ingeniería")
+        self.assertEqual(rows[1]["modelo"], "opus")
+
+        os.environ["BRAIN_OFFICE_API_KEY"] = "bk_test_secret_value"
+        os.environ["TESTSPRITE_API_KEY"] = "sk-member-test"
+        os.environ["TESTSPRITE_PROJECT_ID"] = "proj_test"
+        from studio import qa_testsprite
+        from studio.office import roster
+
+        def fake_http(method, url, headers, payload, timeout):
+            if url.endswith("/api/team"):
+                self.assertTrue(headers["Authorization"].startswith("Bearer bk_"))
+                return payload and None or {
+                    "departments": payload_departments(),
+                    "agents": payload["agents"] if False else team_agents(),
+                }
+            self.assertEqual(method, "POST")
+            self.assertIn("/tests/batch/run", url)
+            self.assertEqual(headers["x-api-key"], "sk-member-test")
+            self.assertEqual(payload["projectId"], "proj_test")
+            self.assertNotIn("sk-member-test", json.dumps(payload))
+            return {"accepted": [{"dashboardUrl": "https://www.testsprite.com/dashboard-v3/projects/proj_test"}], "summary": {}}
+
+        def team_agents():
+            return payload["agents"]
+
+        def payload_departments():
+            return payload["departments"]
+
+        with mock.patch("studio.brain_office._http_json", fake_http):
+            view = roster(sync=True)
+            self.assertEqual(view["agents"][0]["clave"], "Aina")
+            self.assertNotIn("bk_test_secret_value", json.dumps(view["connection"]))
+            started = qa_testsprite.run_for_qa_agents()
+        self.assertEqual(started["qa_agents"], ["Aina"])
+        self.assertEqual(started["testsprite"]["accepted"], 1)
 
     def test_connection_test_uses_whoami_for_huggingface(self):
         from studio.providers import save_provider, test_provider

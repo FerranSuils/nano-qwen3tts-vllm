@@ -143,8 +143,24 @@
 
     <section id="office">
       <div class="panel">
-        <h2>Agente de la oficina</h2>
-        <p class="sub">La oficina entra con el CLI <code>brain</code>. Aquí asignas la voz que ese agente usa en este servidor.</p>
+        <h2>Brain office</h2>
+        <p class="sub" id="officeStatus">Conecta el token de <a href="https://ai.nordicbyte.co.uk/">ai.nordicbyte.co.uk</a>. El equipo, los roles y los modelos salen de allí.</p>
+        <label for="brainKey">Token de la oficina (bk_…, vacío = no cambiar)</label>
+        <input id="brainKey" type="password" autocomplete="off" />
+        <label for="spriteKey">Token de TestSprite para los agentes de QA</label>
+        <input id="spriteKey" type="password" autocomplete="off" />
+        <label for="spriteProject">Proyecto TestSprite</label>
+        <input id="spriteProject" placeholder="af4b3fdd-71df-4a45-b212-7c393ad27e3f" />
+        <div class="row">
+          <button type="button" id="saveOffice">Guardar tokens</button>
+          <button type="button" id="syncOffice">Sincronizar equipo</button>
+          <button type="button" class="primary" id="runQa">QA lanza TestSprite</button>
+        </div>
+        <p id="qaResult" class="sub"></p>
+      </div>
+      <div class="panel">
+        <h2>Voz de un agente</h2>
+        <p class="sub">La ficha (clave, rol, modelo, área) la pone la oficina. Aquí solo eliges con qué voz habla.</p>
         <div class="split">
           <div>
             <label for="clave">Clave</label>
@@ -167,7 +183,7 @@
       <div class="panel" style="overflow-x:auto">
         <table>
           <thead>
-            <tr><th>Clave</th><th>Rol</th><th>Modelo</th><th>Voz</th><th>Estado</th><th></th></tr>
+            <tr><th>Clave</th><th>Rol</th><th>Área</th><th>Modelo</th><th>Voz</th><th>Estado</th><th></th></tr>
           </thead>
           <tbody id="roster"></tbody>
         </table>
@@ -381,20 +397,66 @@ curl -X POST http://127.0.0.1:8000/v1/audio/speech \
       await loadVoices();
     });
 
-    async function loadRoster() {
-      const data = await api("/v1/office/roster");
+    function paintOffice(data) {
+      const link = data.connection || {};
+      const qa = (data.agents || []).filter((agent) => agent.qa).map((agent) => agent.clave);
+      const bits = [];
+      bits.push(link.token_set ? "Oficina conectada (" + (link.token_hint || link.token_source) + ")." : "Falta el token de la oficina.");
+      bits.push(link.testsprite_set ? "TestSprite listo." : "Falta el token de TestSprite.");
+      if (qa.length) bits.push("QA: " + qa.join(", ") + ".");
+      if (link.error) bits.push(link.error);
+      $("officeStatus").textContent = bits.join(" ");
+      if (link.testsprite_project_id && !$("spriteProject").value) $("spriteProject").value = link.testsprite_project_id;
       $("roster").innerHTML = data.agents.map((agent) => `<tr>
-        <td>${esc(agent.clave)}<div class="sub">${esc(agent.department || "")}</div></td>
+        <td>${esc(agent.clave)}${agent.qa ? " <span class='pill ok'>QA</span>" : ""}</td>
         <td>${esc(agent.rol)}</td>
+        <td>${esc(agent.department || "")}</td>
         <td>${esc(agent.modelo)}</td>
         <td><code>${esc(agent.voice_id || "—")}</code></td>
-        <td>${esc(agent.estado)}</td>
+        <td>${esc(agent.estado)}${agent.last_qa ? `<div class="sub">TestSprite ${esc(agent.last_qa.accepted)} casos</div>` : ""}</td>
         <td>
           <button type="button" data-toggle="${esc(agent.id)}" data-estado="${esc(agent.estado)}">${agent.estado === "activo" ? "Desactivar" : "Activar"}</button>
-          <button type="button" class="danger" data-remove="${esc(agent.id)}">Quitar</button>
+          ${agent.source === "brain" ? "" : `<button type="button" class="danger" data-remove="${esc(agent.id)}">Quitar</button>`}
         </td>
       </tr>`).join("");
     }
+
+    async function loadRoster() {
+      paintOffice(await api("/v1/office/roster"));
+    }
+
+    $("saveOffice").addEventListener("click", async () => {
+      $("officeError").textContent = "";
+      const body = { testsprite_project_id: $("spriteProject").value.trim() };
+      if ($("brainKey").value.trim()) body.brain_api_key = $("brainKey").value.trim();
+      if ($("spriteKey").value.trim()) body.testsprite_api_key = $("spriteKey").value.trim();
+      try {
+        await api("/v1/office/connection", { method: "PUT", body: JSON.stringify(body) });
+        $("brainKey").value = "";
+        $("spriteKey").value = "";
+        paintOffice(await api("/v1/office/sync", { method: "POST" }));
+      } catch (err) {
+        $("officeError").textContent = err.message;
+      }
+    });
+
+    $("syncOffice").addEventListener("click", async () => {
+      $("officeError").textContent = "";
+      try { paintOffice(await api("/v1/office/sync", { method: "POST" })); }
+      catch (err) { $("officeError").textContent = err.message; }
+    });
+
+    $("runQa").addEventListener("click", async () => {
+      $("qaResult").textContent = "Aina y el resto de QA están lanzando TestSprite…";
+      try {
+        const result = await api("/v1/office/qa/testsprite", { method: "POST" });
+        const note = result.testsprite || {};
+        $("qaResult").textContent = (result.qa_agents || []).join(", ") + " lanzaron " + (note.accepted || 0) + " casos. " + (note.dashboard || "");
+        await loadRoster();
+      } catch (err) {
+        $("qaResult").textContent = err.message;
+      }
+    });
 
     $("addAgent").addEventListener("click", async () => {
       $("officeError").textContent = "";

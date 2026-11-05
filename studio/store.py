@@ -72,6 +72,9 @@ def empty_state() -> dict:
         "voices": [],
         "hidden_builtin_ids": [],
         "agents": [],
+        "brain_api_key": "",
+        "testsprite_api_key": "",
+        "testsprite_project_id": "",
     }
 
 

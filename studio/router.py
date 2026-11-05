@@ -9,7 +9,7 @@ from fastapi import APIRouter, Header, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
-from studio import claude_workflow, office, providers, voices
+from studio import brain_office, claude_workflow, office, providers, qa_testsprite, voices
 
 router = APIRouter()
 _WEB = Path(__file__).resolve().parent / "web" / "index.html"
@@ -73,6 +73,14 @@ class AgentPatch(BaseModel):
     estado: str | None = None
     voice_id: str | None = None
     department: str | None = None
+
+
+class OfficeConnection(BaseModel):
+    brain_api_key: str | None = None
+    clear_brain_api_key: bool = False
+    testsprite_api_key: str | None = None
+    clear_testsprite_api_key: bool = False
+    testsprite_project_id: str | None = None
 
 
 class WorkflowRequest(BaseModel):
@@ -186,6 +194,31 @@ def get_roster(authorization: str | None = Header(default=None)):
     return office.roster()
 
 
+@router.put("/v1/office/connection")
+def put_connection(body: OfficeConnection, authorization: str | None = Header(default=None)):
+    require_studio(authorization)
+    return brain_office.save_connection(body.model_dump())
+
+
+@router.post("/v1/office/sync")
+def post_sync(authorization: str | None = Header(default=None)):
+    require_studio(authorization)
+    try:
+        brain_office.sync_team(force=True)
+    except brain_office.BrainOfficeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return office.roster(sync=False)
+
+
+@router.post("/v1/office/qa/testsprite")
+def post_qa(authorization: str | None = Header(default=None)):
+    require_studio(authorization)
+    try:
+        return qa_testsprite.run_for_qa_agents()
+    except brain_office.BrainOfficeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
 @router.post("/v1/office/agents")
 def post_agent(body: AgentWrite, authorization: str | None = Header(default=None)):
     require_studio(authorization)
@@ -207,7 +240,11 @@ def patch_agent(agent_id: str, body: AgentPatch, authorization: str | None = Hea
 @router.delete("/v1/office/agents/{agent_id}")
 def remove_agent(agent_id: str, authorization: str | None = Header(default=None)):
     require_studio(authorization)
-    if not office.delete_agent(agent_id):
+    try:
+        deleted = office.delete_agent(agent_id)
+    except office.OfficeError as exc:
+        raise _office_error(exc) from exc
+    if not deleted:
         raise HTTPException(status_code=404, detail=f"No existe el agente '{agent_id}'")
     return {"deleted": agent_id}
 
