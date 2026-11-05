@@ -7,6 +7,8 @@ is never returned by the API.
 
 from __future__ import annotations
 
+import contextvars
+import hashlib
 import json
 import os
 import re
@@ -17,12 +19,18 @@ import urllib.request
 from studio.store import load_state, update_state
 
 OFFICE_URL = "https://ai.nordicbyte.co.uk"
-_CACHE: dict = {"at": 0.0, "agents": None}
+_CACHE: dict = {}
+_WHO: dict = {}
 _CACHE_SECONDS = 45
+current_token: contextvars.ContextVar[str] = contextvars.ContextVar("brain_user_token", default="")
 
 
 class BrainOfficeError(Exception):
     pass
+
+
+class AuthError(Exception):
+    """The caller did not present a brain-office user token."""
 
 
 def office_url() -> str:
@@ -64,16 +72,88 @@ def testsprite_project_id() -> str:
     ).strip()
 
 
+def caller_token() -> str:
+    return current_token.get().strip()
+
+
+def parse_bearer(authorization: str | None) -> str:
+    if not authorization or not authorization.lower().startswith("bearer "):
+        raise AuthError("Hace falta el token de un usuario de https://ai.nordicbyte.co.uk/login")
+    token = authorization.split(None, 1)[1].strip()
+    if not token:
+        raise AuthError("Hace falta el token de un usuario de https://ai.nordicbyte.co.uk/login")
+    return token
+
+
+def identify(token: str) -> dict:
+    """Confirm the token with the office. The office key itself is not returned."""
+    digest = hashlib.sha256(token.encode()).hexdigest()
+    now = time.time()
+    hit = _WHO.get(digest)
+    if hit and now - hit[0] < 60:
+        return hit[1]
+    try:
+        data = _http_json(
+            "GET",
+            office_url() + "/auth/me",
+            {"Authorization": f"Bearer {token}", "Accept": "application/json"},
+            None,
+            15,
+        )
+    except BrainOfficeError as exc:
+        if str(exc).startswith("401") or str(exc).startswith("403"):
+            raise AuthError("Ese token no pertenece a un usuario de la oficina") from exc
+        raise
+    user = {
+        "email": str(data.get("email") or ""),
+        "user_id": str(data.get("user_id") or data.get("id") or ""),
+    }
+    if not user["email"] and not user["user_id"]:
+        raise AuthError("La oficina no reconoció el token")
+    _WHO[digest] = (now, user)
+    return user
+
+
+def require_user(authorization: str | None) -> dict:
+    token = parse_bearer(authorization)
+    user = identify(token)
+    current_token.set(token)
+    return user
+
+
+def login(email: str, password: str) -> dict:
+    """Same email and password as https://ai.nordicbyte.co.uk/login. Returns that user's token once."""
+    email = (email or "").strip()
+    if not email or not password:
+        raise BrainOfficeError("Email y contraseña son obligatorios")
+    data = _http_json(
+        "POST",
+        office_url() + "/auth/login",
+        {"Accept": "application/json"},
+        {"email": email, "password": password},
+        20,
+    )
+    key = str(data.get("api_key") or "").strip()
+    if not key:
+        raise BrainOfficeError("La oficina no devolvió un token")
+    return {"email": str(data.get("email") or email), "user_id": str(data.get("user_id") or ""), "api_key": key}
+
+
 def public_connection() -> dict:
-    token, source = office_token()
     ts, ts_source = testsprite_token()
+    token = caller_token()
+    user = {}
+    if token:
+        try:
+            user = identify(token)
+        except (AuthError, BrainOfficeError):
+            user = {}
     return {
         "office": office_url(),
-        "token_set": bool(token),
-        "token_hint": _hint(token),
-        "token_source": source or "none",
+        "email": user.get("email") or "",
+        "token_set": bool(token and user),
+        "token_source": "user" if user else "none",
         "testsprite_set": bool(ts),
-        "testsprite_hint": _hint(ts),
         "testsprite_source": ts_source or "none",
         "testsprite_project_id": testsprite_project_id(),
     }
@@ -130,10 +210,10 @@ def _http_json(method: str, url: str, headers: dict, payload: dict | None, timeo
     return parsed
 
 
-def fetch_team() -> dict:
-    token, _source = office_token()
+def fetch_team(token: str | None = None) -> dict:
+    token = (token or caller_token()).strip()
     if not token:
-        raise BrainOfficeError("Falta BRAIN_OFFICE_API_KEY")
+        raise AuthError("Hace falta el token de un usuario de https://ai.nordicbyte.co.uk/login")
     return _http_json(
         "GET",
         office_url() + "/api/team",
@@ -176,11 +256,16 @@ def agents_from_team(payload: dict, previous: list[dict]) -> list[dict]:
     return rows
 
 
-def sync_team(*, force: bool = False) -> list[dict]:
+def sync_team(*, force: bool = False, token: str | None = None) -> list[dict]:
+    token = (token or caller_token()).strip()
+    if not token:
+        raise AuthError("Hace falta el token de un usuario de https://ai.nordicbyte.co.uk/login")
+    digest = hashlib.sha256(token.encode()).hexdigest()[:16]
     now = time.time()
-    if not force and _CACHE["agents"] is not None and now - _CACHE["at"] < _CACHE_SECONDS:
-        return list(_CACHE["agents"])
-    payload = fetch_team()
+    cached = _CACHE.get(digest)
+    if not force and cached and now - cached["at"] < _CACHE_SECONDS:
+        return list(cached["agents"])
+    payload = fetch_team(token)
     previous = list(load_state().get("agents") or [])
     rows = agents_from_team(payload, previous)
 
@@ -188,15 +273,14 @@ def sync_team(*, force: bool = False) -> list[dict]:
         state["agents"] = rows
 
     update_state(mutate)
-    _CACHE["at"] = now
-    _CACHE["agents"] = rows
+    _CACHE[digest] = {"at": now, "agents": rows}
     return rows
 
 
 def set_enabled(key: str, enabled: bool) -> None:
-    token, _source = office_token()
+    token = caller_token()
     if not token:
-        raise BrainOfficeError("Falta BRAIN_OFFICE_API_KEY")
+        raise AuthError("Hace falta el token de un usuario de https://ai.nordicbyte.co.uk/login")
     action = "enable" if enabled else "disable"
     _http_json(
         "POST",
@@ -209,5 +293,5 @@ def set_enabled(key: str, enabled: bool) -> None:
 
 
 def reset_cache() -> None:
-    _CACHE["at"] = 0.0
-    _CACHE["agents"] = None
+    _CACHE.clear()
+    _WHO.clear()

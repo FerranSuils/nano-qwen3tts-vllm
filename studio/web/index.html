@@ -76,14 +76,30 @@
   </style>
 </head>
 <body>
+  <div id="gate" class="panel" style="max-width:420px;margin:64px auto;">
+    <h2>log in</h2>
+    <p class="sub">El mismo usuario que <a href="https://ai.nordicbyte.co.uk/login">ai.nordicbyte.co.uk/login</a>. Sin ese token no se ve el equipo ni la API.</p>
+    <form id="loginForm">
+      <label for="loginEmail">email</label>
+      <input id="loginEmail" type="email" autocomplete="username" required />
+      <label for="loginPassword">password</label>
+      <input id="loginPassword" type="password" autocomplete="current-password" required />
+      <div class="row"><button class="primary" type="submit">log in</button></div>
+    </form>
+    <label for="loginToken">o el token bk_ de esa cuenta</label>
+    <input id="loginToken" type="password" autocomplete="off" />
+    <div class="row"><button type="button" id="useToken">entrar con token</button></div>
+    <p id="loginError" class="error"></p>
+  </div>
+  <div id="app" hidden>
   <header>
     <div>
       <h1>Estudio de voces</h1>
       <p class="sub">Mismo servidor que <code>POST /v1/audio/speech</code>. Compatible con <a href="https://ai.nordicbyte.co.uk/">ai.nordicbyte.co.uk</a>.</p>
     </div>
     <div>
-      <label for="studioToken">Token del estudio (si definiste STUDIO_API_TOKEN)</label>
-      <input id="studioToken" type="password" autocomplete="off" placeholder="opcional" />
+      <p class="sub" id="who"></p>
+      <button type="button" id="logout">salir</button>
     </div>
   </header>
   <main>
@@ -144,15 +160,8 @@
     <section id="office">
       <div class="panel">
         <h2>Brain office</h2>
-        <p class="sub" id="officeStatus">Conecta el token de <a href="https://ai.nordicbyte.co.uk/">ai.nordicbyte.co.uk</a>. El equipo, los roles y los modelos salen de allí.</p>
-        <label for="brainKey">Token de la oficina (bk_…, vacío = no cambiar)</label>
-        <input id="brainKey" type="password" autocomplete="off" />
-        <label for="spriteKey">Token de TestSprite para los agentes de QA</label>
-        <input id="spriteKey" type="password" autocomplete="off" />
-        <label for="spriteProject">Proyecto TestSprite</label>
-        <input id="spriteProject" placeholder="af4b3fdd-71df-4a45-b212-7c393ad27e3f" />
+        <p class="sub" id="officeStatus">El equipo sale del usuario con el que has entrado.</p>
         <div class="row">
-          <button type="button" id="saveOffice">Guardar tokens</button>
           <button type="button" id="syncOffice">Sincronizar equipo</button>
           <button type="button" class="primary" id="runQa">QA lanza TestSprite</button>
         </div>
@@ -210,16 +219,16 @@ curl -X POST http://127.0.0.1:8000/v1/audio/speech \
       </div>
     </section>
   </main>
+  </div>
   <script>
     const $ = (id) => document.getElementById(id);
-    const tokenInput = $("studioToken");
-    tokenInput.value = localStorage.getItem("studioToken") || "";
-    tokenInput.addEventListener("change", () => localStorage.setItem("studioToken", tokenInput.value.trim()));
-
+    function sessionToken() {
+      return sessionStorage.getItem("brainToken") || "";
+    }
     function headers(json) {
       const h = {};
       if (json) h["Content-Type"] = "application/json";
-      const token = tokenInput.value.trim();
+      const token = sessionToken();
       if (token) h.Authorization = "Bearer " + token;
       return h;
     }
@@ -401,12 +410,11 @@ curl -X POST http://127.0.0.1:8000/v1/audio/speech \
       const link = data.connection || {};
       const qa = (data.agents || []).filter((agent) => agent.qa).map((agent) => agent.clave);
       const bits = [];
-      bits.push(link.token_set ? "Oficina conectada (" + (link.token_hint || link.token_source) + ")." : "Falta el token de la oficina.");
-      bits.push(link.testsprite_set ? "TestSprite listo." : "Falta el token de TestSprite.");
+      bits.push(link.email ? "Sesión de " + link.email + "." : "Sin sesión de la oficina.");
+      bits.push(link.testsprite_set ? "TestSprite listo para QA." : "TestSprite no está configurado en el servidor.");
       if (qa.length) bits.push("QA: " + qa.join(", ") + ".");
       if (link.error) bits.push(link.error);
       $("officeStatus").textContent = bits.join(" ");
-      if (link.testsprite_project_id && !$("spriteProject").value) $("spriteProject").value = link.testsprite_project_id;
       $("roster").innerHTML = data.agents.map((agent) => `<tr>
         <td>${esc(agent.clave)}${agent.qa ? " <span class='pill ok'>QA</span>" : ""}</td>
         <td>${esc(agent.rol)}</td>
@@ -424,21 +432,6 @@ curl -X POST http://127.0.0.1:8000/v1/audio/speech \
     async function loadRoster() {
       paintOffice(await api("/v1/office/roster"));
     }
-
-    $("saveOffice").addEventListener("click", async () => {
-      $("officeError").textContent = "";
-      const body = { testsprite_project_id: $("spriteProject").value.trim() };
-      if ($("brainKey").value.trim()) body.brain_api_key = $("brainKey").value.trim();
-      if ($("spriteKey").value.trim()) body.testsprite_api_key = $("spriteKey").value.trim();
-      try {
-        await api("/v1/office/connection", { method: "PUT", body: JSON.stringify(body) });
-        $("brainKey").value = "";
-        $("spriteKey").value = "";
-        paintOffice(await api("/v1/office/sync", { method: "POST", body: "{}" }));
-      } catch (err) {
-        $("officeError").textContent = err.message;
-      }
-    });
 
     $("syncOffice").addEventListener("click", async () => {
       $("officeError").textContent = "";
@@ -490,18 +483,63 @@ curl -X POST http://127.0.0.1:8000/v1/audio/speech \
       await loadRoster();
     });
 
+    function showApp() {
+      $("gate").hidden = true;
+      $("app").hidden = false;
+    }
+    function showGate(message) {
+      sessionStorage.removeItem("brainToken");
+      $("app").hidden = true;
+      $("gate").hidden = false;
+      if (message) $("loginError").textContent = message;
+    }
+    async function enter(token) {
+      sessionStorage.setItem("brainToken", token);
+      $("loginPassword").value = "";
+      $("loginToken").value = "";
+      showApp();
+      await boot();
+    }
+    $("loginForm").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      $("loginError").textContent = "";
+      try {
+        const res = await fetch("/v1/office/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email: $("loginEmail").value.trim(), password: $("loginPassword").value }),
+        });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(typeof body.detail === "string" ? body.detail : "login rechazado");
+        await enter(body.api_key);
+      } catch (err) {
+        $("loginError").textContent = err.message;
+      }
+    });
+    $("useToken").addEventListener("click", async () => {
+      const token = $("loginToken").value.trim();
+      if (!token) return;
+      await enter(token);
+    });
+    $("logout").addEventListener("click", () => showGate(""));
+
     async function boot() {
+      if (!sessionToken()) {
+        showGate("");
+        return;
+      }
       try {
         const health = await api("/health");
-        $("banner").textContent = health.tts_loaded ? "Motor TTS cargado." : "Motor TTS sin cargar (normal sin CUDA). Proveedores, voces y oficina siguen disponibles.";
+        $("banner").textContent = health.tts_loaded ? "Motor TTS cargado." : "Motor TTS sin cargar (normal sin CUDA). El equipo solo se ve con tu usuario de la oficina.";
         await loadProviders();
         await loadVoices();
         await loadRoster();
+        showApp();
       } catch (err) {
-        $("banner").textContent = err.message;
+        showGate(err.message);
       }
     }
-    boot();
+    if (sessionToken()) boot();
   </script>
 </body>
 </html>

@@ -151,41 +151,41 @@ class StudioTest(unittest.TestCase):
         app = FastAPI()
         app.include_router(router)
         client = TestClient(app)
-        listed = client.get("/v1/providers")
+        anonymous = client.get("/v1/providers")
+        self.assertEqual(anonymous.status_code, 401)
+        auth = {"Authorization": "Bearer bk_user"}
+        from studio.brain_office import BrainOfficeError
+        self.enterContext(mock.patch("studio.brain_office.identify", return_value={"email": "ferran@example.com", "user_id": "1"}))
+        self.enterContext(mock.patch("studio.brain_office.sync_team", side_effect=BrainOfficeError("offline")))
+        listed = client.get("/v1/providers", headers=auth)
         self.assertEqual(listed.status_code, 200)
         self.assertGreaterEqual(len(listed.json()["providers"]), 10)
         page = client.get("/ui")
         self.assertEqual(page.status_code, 200)
         self.assertIn("Estudio de voces", page.text)
         self.assertIn("ai.nordicbyte.co.uk", page.text)
-        saved = client.put("/v1/providers/ollama", json={"model": "qwen2.5", "enabled": True})
+        saved = client.put("/v1/providers/ollama", json={"model": "qwen2.5", "enabled": True}, headers=auth)
         self.assertEqual(saved.status_code, 200)
         os.environ["ANTHROPIC_API_KEY"] = "sk-ant-from-env"
-        created = client.post("/v1/claude/workflow", json={"force": True})
+        created = client.post("/v1/claude/workflow", json={"force": True}, headers=auth)
         self.assertEqual(created.status_code, 200, created.text)
         self.assertEqual(created.json()["written"], 7)
-        voice = client.post("/v1/voices", json={
+        voice = client.post("/v1/voices", headers=auth, json={
             "name": "Manual",
             "instruct": "Low dry voice, unhurried, peninsular Spanish, mid-forties.",
             "language": "Spanish",
         })
         self.assertEqual(voice.status_code, 200, voice.text)
-        agent = client.post("/v1/office/agents", json={
+        agent = client.post("/v1/office/agents", headers=auth, json={
             "clave": "Hugo",
             "rol": "cierra cuentas",
             "modelo": "ollama/qwen2.5",
             "voice_id": voice.json()["id"],
         })
         self.assertEqual(agent.status_code, 200, agent.text)
-        roster = client.get("/v1/office/roster")
+        roster = client.get("/v1/office/roster", headers=auth)
         self.assertEqual(roster.json()["agents"][0]["clave"], "Hugo")
         self.assertEqual(roster.json()["contract"]["office"], "https://ai.nordicbyte.co.uk/")
-        os.environ["STUDIO_API_TOKEN"] = "office-secret"
-        denied = client.get("/v1/providers")
-        self.assertEqual(denied.status_code, 401)
-        allowed = client.get("/v1/providers", headers={"Authorization": "Bearer office-secret"})
-        self.assertEqual(allowed.status_code, 200)
-        # The speech contract stays readable without the studio token.
         self.assertEqual(client.get("/v1/office/contract").status_code, 200)
 
     def test_brain_team_becomes_the_roster_and_marks_qa(self):
@@ -214,6 +214,8 @@ class StudioTest(unittest.TestCase):
         from studio.office import roster
 
         def fake_http(method, url, headers, payload, timeout):
+            if url.endswith("/auth/me"):
+                return {"email": "ferran@example.com", "user_id": "1"}
             if url.endswith("/api/team"):
                 self.assertTrue(headers["Authorization"].startswith("Bearer bk_"))
                 return payload and None or {
@@ -234,6 +236,8 @@ class StudioTest(unittest.TestCase):
             return payload["departments"]
 
         with mock.patch("studio.brain_office._http_json", fake_http):
+            from studio import brain_office
+            brain_office.current_token.set("bk_test_secret_value")
             view = roster(sync=True)
             self.assertEqual(view["agents"][0]["clave"], "Aina")
             self.assertNotIn("bk_test_secret_value", json.dumps(view["connection"]))

@@ -40,7 +40,7 @@ try:
     import torch
 except ImportError:  # studio API can run before the GPU stack is installed
     torch = None
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
@@ -363,8 +363,19 @@ async def health():
     return {"status": "ok", "tts_loaded": _tts_ready}
 
 
+def _require_office_user(authorization: str | None) -> None:
+    from studio.brain_office import AuthError, BrainOfficeError, require_user
+    try:
+        require_user(authorization)
+    except AuthError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+    except BrainOfficeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
 @app.get("/voices")
-async def list_voices():
+async def list_voices(authorization: str | None = Header(default=None)):
+    _require_office_user(authorization)
     """
     List all available voices (default speakers + voice clones).
     Returns a dictionary with 'default' and 'clones' keys.
@@ -794,7 +805,7 @@ async def generate_speech_stream(request: SpeechRequest):
                 pass  # may already be closed from normal EOS
 
 @app.post("/v1/audio/speech", response_class=StreamingResponse)
-async def generate_speech(request: SpeechRequest):
+async def generate_speech(request: SpeechRequest, authorization: str | None = Header(default=None)):
     """
     Generate speech from text.
     Returns raw PCM 16-bit mono at 24 kHz (audio/L16).
@@ -802,7 +813,9 @@ async def generate_speech(request: SpeechRequest):
 
     ``speaker`` keeps the previous CustomVoice / clone behaviour.
     ``voice_id`` or ``instruct`` switches that request onto VoiceDesign.
+    The caller must be a brain office user.
     """
+    _require_office_user(authorization)
     if request.voice_id:
         from studio.voices import get_voice
         if get_voice(request.voice_id) is None:

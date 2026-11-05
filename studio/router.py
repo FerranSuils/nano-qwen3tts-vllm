@@ -15,15 +15,19 @@ router = APIRouter()
 _WEB = Path(__file__).resolve().parent / "web" / "index.html"
 
 
-def require_studio(authorization: str | None = Header(default=None)) -> None:
-    expected = os.environ.get("STUDIO_API_TOKEN", "").strip()
-    if not expected:
-        return
-    token = ""
-    if authorization and authorization.lower().startswith("bearer "):
-        token = authorization.split(" ", 1)[1].strip()
-    if token != expected:
-        raise HTTPException(status_code=401, detail="Studio token required")
+def require_studio(authorization: str | None = Header(default=None)) -> dict:
+    """Only a signed-in brain office user. A server env key does not open the site."""
+    try:
+        return brain_office.require_user(authorization)
+    except brain_office.AuthError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+    except brain_office.BrainOfficeError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+class OfficeLogin(BaseModel):
+    email: str
+    password: str
 
 
 class ProviderUpdate(BaseModel):
@@ -183,9 +187,21 @@ def remove_voice(voice_id: str, authorization: str | None = Header(default=None)
     return {"deleted": voice_id}
 
 
+@router.post("/v1/office/login")
+def post_login(body: OfficeLogin):
+    """Same login as https://ai.nordicbyte.co.uk/login. The token is that user's api_key."""
+    try:
+        return brain_office.login(body.email, body.password)
+    except brain_office.BrainOfficeError as exc:
+        status = 401 if str(exc).startswith("401") or "contraseña" in str(exc).lower() or "obligatorios" in str(exc) else 502
+        if "401" in str(exc) or "403" in str(exc):
+            status = 401
+        raise HTTPException(status_code=status, detail=str(exc)) from exc
+
+
 @router.get("/v1/office/contract")
 def get_contract():
-    return office.CONTRACT
+    return {"office": "https://ai.nordicbyte.co.uk/", "login": "/v1/office/login"}
 
 
 @router.get("/v1/office/roster")

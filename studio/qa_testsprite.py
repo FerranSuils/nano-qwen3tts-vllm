@@ -23,7 +23,7 @@ def run_for_qa_agents(*, project_id: str | None = None, target_url: str | None =
     if not project:
         raise BrainOfficeError("Falta TESTSPRITE_PROJECT_ID")
     target = (target_url or os.environ.get("VOICES_PUBLIC_URL") or "https://voices.nordicbyte.co.uk").rstrip("/")
-    if brain_office.office_token()[0]:
+    if brain_office.caller_token():
         brain_office.sync_team(force=True)
     qa_agents = [agent for agent in (load_state().get("agents") or []) if agent.get("qa")]
     if not qa_agents:

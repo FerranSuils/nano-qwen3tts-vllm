@@ -74,10 +74,12 @@ def list_agents() -> list[dict]:
     return list(load_state().get("agents") or [])
 
 
-def roster(*, sync: bool = True) -> dict:
+def roster(*, sync: bool = True, token: str | None = None) -> dict:
+    if token:
+        brain_office.current_token.set(token)
     connection = brain_office.public_connection()
     error = ""
-    if sync and connection["token_set"]:
+    if sync and brain_office.caller_token():
         try:
             brain_office.sync_team()
         except BrainOfficeError as exc:
