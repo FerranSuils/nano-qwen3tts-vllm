@@ -74,6 +74,23 @@ def list_agents() -> list[dict]:
     return list(load_state().get("agents") or [])
 
 
+def sample_line(agent: dict) -> str:
+    """A short Spanish line about this person's own work, for the voice preview."""
+    name = (agent.get("clave") or "alguien").strip()
+    area = (agent.get("department") or "la oficina").strip()
+    role = (agent.get("rol") or "el trabajo de hoy").strip().rstrip(".")
+    if name.lower() == "jarvis" or agent.get("id") == "jarvis":
+        return (
+            "Bienvenido. Soy Jarvis, de la recepción. "
+            "La cola está al día y no hay nada urgente que no pueda esperar a que te sientes."
+        )
+    return (
+        f"Soy {name}, de {area}. "
+        f"Hoy me toca esto: {role}. "
+        f"Te lo cuento en corto, como lo diría yo en el trabajo."
+    )
+
+
 def roster(*, sync: bool = True, token: str | None = None) -> dict:
     if token:
         brain_office.current_token.set(token)

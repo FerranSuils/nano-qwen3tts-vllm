@@ -5,8 +5,12 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+import io
+import wave
+from urllib.parse import quote
+
 from fastapi import APIRouter, Header, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, Field
 
 from studio import brain_office, claude_workflow, office, providers, qa_testsprite, voices
@@ -234,6 +238,50 @@ def post_qa(authorization: str | None = Header(default=None)):
         return qa_testsprite.run_for_qa_agents()
     except brain_office.BrainOfficeError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@router.post("/v1/office/agents/{agent_id}/simulate")
+def simulate_agent(agent_id: str, authorization: str | None = Header(default=None)):
+    """Speak one line about this agent's role and area, in their assigned voice."""
+    require_studio(authorization)
+    agent = next((item for item in office.list_agents() if item["id"] == agent_id), None)
+    if agent is None:
+        raise HTTPException(status_code=404, detail=f"No existe el agente '{agent_id}'")
+    if not agent.get("voice_id"):
+        raise HTTPException(status_code=400, detail=f"{agent.get('clave') or agent_id} no tiene voz asignada")
+    from studio.zerogpu_tts import available, speech_pcm
+    if not available():
+        raise HTTPException(status_code=503, detail="ZeroGPU no está configurado")
+    text = office.sample_line(agent)
+
+    class _Speech:
+        pass
+
+    request = _Speech()
+    request.text = text
+    request.voice_id = agent["voice_id"]
+    request.instruct = None
+    request.language = "Spanish"
+    try:
+        pcm = speech_pcm(request)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        detail = str(exc)
+        if "hf_" in detail:
+            detail = "error de ZeroGPU"
+        raise HTTPException(status_code=502, detail=detail[:300]) from exc
+    buffer = io.BytesIO()
+    with wave.open(buffer, "wb") as handle:
+        handle.setnchannels(1)
+        handle.setsampwidth(2)
+        handle.setframerate(24000)
+        handle.writeframes(pcm)
+    return Response(
+        content=buffer.getvalue(),
+        media_type="audio/wav",
+        headers={"X-Sample-Line": quote(text)},
+    )
 
 
 @router.post("/v1/office/agents")

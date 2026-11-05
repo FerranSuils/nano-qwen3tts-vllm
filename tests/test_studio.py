@@ -39,6 +39,21 @@ class StudioTest(unittest.TestCase):
         self.home.cleanup()
         self.workflow.cleanup()
 
+    def test_sample_line_uses_name_role_and_area(self):
+        from studio.office import sample_line
+        line = sample_line({
+            "clave": "Marta",
+            "department": "Financiación e Inversión",
+            "rol": "dirige la estrategia de financiación.",
+            "id": "fin-jefe",
+        })
+        self.assertIn("Marta", line)
+        self.assertIn("Financiación e Inversión", line)
+        self.assertIn("estrategia de financiación", line)
+        jarvis = sample_line({"clave": "Jarvis", "id": "jarvis", "department": "jarvis", "rol": "recepción"})
+        self.assertIn("Jarvis", jarvis)
+        self.assertIn("recepción", jarvis)
+
     def test_zerogpu_is_opt_in(self):
         from studio.zerogpu_tts import available
         os.environ.pop("ZEROGPU_SPACE", None)

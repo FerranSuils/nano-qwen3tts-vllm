@@ -169,7 +169,8 @@
       </div>
       <div class="panel">
         <h2>Voz de un agente</h2>
-        <p class="sub">La ficha (clave, rol, modelo, área) la pone la oficina. Aquí solo eliges con qué voz habla.</p>
+        <p class="sub">La ficha la pone la oficina. Simular hace que hable un momento de su rol y de su área, con su voz.</p>
+        <audio id="agentAudio" hidden></audio>
         <div class="split">
           <div>
             <label for="clave">Clave</label>
@@ -426,6 +427,7 @@ curl -X POST http://127.0.0.1:8000/v1/audio/speech \
         <td><code>${esc(agent.voice_id || "—")}</code></td>
         <td>${esc(agent.estado)}${agent.last_qa ? `<div class="sub">TestSprite ${esc(agent.last_qa.accepted)} casos</div>` : ""}</td>
         <td>
+          <button type="button" data-simulate="${esc(agent.id)}" ${agent.voice_id ? "" : "disabled"}>Simular</button>
           <button type="button" data-toggle="${esc(agent.id)}" data-estado="${esc(agent.estado)}">${agent.estado === "activo" ? "Desactivar" : "Activar"}</button>
           ${agent.source === "brain" ? "" : `<button type="button" class="danger" data-remove="${esc(agent.id)}">Quitar</button>`}
         </td>
@@ -475,8 +477,40 @@ curl -X POST http://127.0.0.1:8000/v1/audio/speech \
     });
 
     $("roster").addEventListener("click", async (event) => {
+      const simulate = event.target.closest("button[data-simulate]");
       const toggle = event.target.closest("button[data-toggle]");
       const remove = event.target.closest("button[data-remove]");
+      if (simulate) {
+        const button = simulate;
+        const previous = button.textContent;
+        button.disabled = true;
+        button.textContent = "Hablando…";
+        $("officeError").textContent = "";
+        try {
+          const res = await fetch("/v1/office/agents/" + button.dataset.simulate + "/simulate", {
+            method: "POST",
+            headers: headers(true),
+            body: "{}",
+          });
+          const spoken = decodeURIComponent(res.headers.get("X-Sample-Line") || "");
+          if (!res.ok) {
+            const body = await res.json().catch(() => ({}));
+            throw new Error(typeof body.detail === "string" ? body.detail : "No se pudo simular");
+          }
+          const blob = await res.blob();
+          const url = URL.createObjectURL(blob);
+          const audio = $("agentAudio");
+          audio.src = url;
+          await audio.play();
+          if (spoken) $("officeError").textContent = spoken;
+        } catch (err) {
+          $("officeError").textContent = err.message;
+        } finally {
+          button.disabled = false;
+          button.textContent = previous;
+        }
+        return;
+      }
       if (toggle) {
         const estado = toggle.dataset.estado === "activo" ? "inactivo" : "activo";
         await api("/v1/office/agents/" + toggle.dataset.toggle, { method: "PATCH", body: JSON.stringify({ estado }) });
