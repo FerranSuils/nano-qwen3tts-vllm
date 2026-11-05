@@ -145,6 +145,9 @@ def _pick(seed: str, gender: str) -> str:
 
 
 def voice_for_agent(agent: dict) -> str:
+    custom = str(agent.get("elevenlabs_voice_id") or "").strip()
+    if custom:
+        return custom
     clave = str(agent.get("clave") or "").strip().lower()
     agent_id = str(agent.get("id") or agent.get("brain_key") or "").strip().lower()
     if clave == "jarvis" or agent_id == "jarvis":
@@ -154,9 +157,33 @@ def voice_for_agent(agent: dict) -> str:
     return _pick(seed, gender)
 
 
+def linked_ids() -> set[str]:
+    from studio.office import list_agents
+
+    return {
+        str(item.get("elevenlabs_voice_id") or "").strip()
+        for item in list_agents()
+        if str(item.get("elevenlabs_voice_id") or "").strip()
+    }
+
+
+def resolvable(voice_id: str) -> bool:
+    voice_id = (voice_id or "").strip()
+    return bool(voice_id) and (voice_id in _ALL or voice_id in linked_ids())
+
+
+def nearest_voice(gender: str, accent_i: int, created: list[dict]) -> dict:
+    """Pick the saved design of the same gender whose accent sits closest on the cast wheel."""
+    pool = [item for item in created if item.get("gender") == gender] or list(created)
+    def distance(item: dict) -> int:
+        delta = abs(int(item.get("accent_i") or 0) - int(accent_i)) % 19
+        return min(delta, 19 - delta)
+    return min(pool, key=distance)
+
+
 def voice_for_speech(voice_id: str | None, instruct: str | None) -> str:
     voice_id = (voice_id or "").strip()
-    if voice_id in _ALL:
+    if voice_id in _ALL or (voice_id and voice_id in linked_ids()):
         return voice_id
     if voice_id:
         from studio.office import list_agents
@@ -219,3 +246,72 @@ def iter_pcm(text: str, voice_id: str):
 
 def speech_pcm(text: str, voice_id: str) -> bytes:
     return b"".join(iter_pcm(text, voice_id))
+
+
+def _api_json(method: str, path: str, payload: dict | None = None, timeout: float = 90) -> dict:
+    key, _source = credentials()
+    if not key:
+        raise ElevenLabsError("Falta ELEVENLABS_API_KEY")
+    data = None if payload is None else json.dumps(payload).encode("utf-8")
+    headers = {"xi-api-key": key, "Accept": "application/json"}
+    if data is not None:
+        headers["Content-Type"] = "application/json"
+    request = urllib.request.Request(_API + path, data=data, headers=headers, method=method)
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            body = response.read().decode("utf-8")
+    except urllib.error.HTTPError as exc:
+        detail = redact(exc.read().decode("utf-8", errors="replace")[:400])
+        error = ElevenLabsError(f"ElevenLabs {exc.code}: {detail}")
+        error.status = exc.code
+        raise error from exc
+    except urllib.error.URLError as exc:
+        raise ElevenLabsError(f"No se pudo conectar con ElevenLabs: {exc.reason}") from exc
+    parsed = json.loads(body) if body.strip() else {}
+    if not isinstance(parsed, dict):
+        raise ElevenLabsError("Respuesta inesperada de ElevenLabs")
+    return parsed
+
+
+def account_voices() -> list[dict]:
+    payload = _api_json("GET", "/voices")
+    rows = []
+    for item in payload.get("voices") or []:
+        rows.append({
+            "voice_id": str(item.get("voice_id") or ""),
+            "name": str(item.get("name") or ""),
+            "category": str(item.get("category") or ""),
+            "labels": dict(item.get("labels") or {}),
+        })
+    return rows
+
+
+def slot_usage() -> tuple[int, int]:
+    payload = _api_json("GET", "/user/subscription")
+    return int(payload.get("voice_slots_used") or 0), int(payload.get("voice_limit") or 0)
+
+
+def create_designed_voice(*, name: str, description: str, text: str, seed: int, labels: dict) -> str:
+    """Design one Spanish voice and save it. The preview audio is not downloaded."""
+    designed = _api_json("POST", "/text-to-voice/design", {
+        "voice_description": description[:900],
+        "model_id": "eleven_multilingual_ttv_v2",
+        "text": text[:1000],
+        "stream_previews": True,
+        "should_enhance": False,
+        "guidance_scale": 4,
+        "seed": int(seed) % 2147483647,
+    })
+    previews = designed.get("previews") or []
+    if not previews or not previews[0].get("generated_voice_id"):
+        raise ElevenLabsError(f"ElevenLabs no devolvió un preview para {name}")
+    created = _api_json("POST", "/text-to-voice", {
+        "voice_name": name[:100],
+        "voice_description": description[:900],
+        "generated_voice_id": previews[0]["generated_voice_id"],
+        "labels": {str(key)[:32]: str(value)[:64] for key, value in labels.items()},
+    })
+    voice_id = str(created.get("voice_id") or "")
+    if not voice_id:
+        raise ElevenLabsError(f"ElevenLabs no guardó la voz {name}")
+    return voice_id

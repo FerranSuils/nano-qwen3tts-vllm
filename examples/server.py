@@ -818,7 +818,7 @@ async def generate_speech(request: SpeechRequest, authorization: str | None = He
     _require_office_user(authorization)
     from studio import elevenlabs
     from studio.voices import get_voice
-    if request.voice_id and get_voice(request.voice_id) is None and request.voice_id not in elevenlabs.known_ids():
+    if request.voice_id and get_voice(request.voice_id) is None and not elevenlabs.resolvable(request.voice_id):
         raise HTTPException(status_code=404, detail=f"Designed voice '{request.voice_id}' not found")
     if elevenlabs.available():
         voice = elevenlabs.voice_for_speech(request.voice_id, request.instruct)

@@ -224,9 +224,16 @@ class StudioTest(unittest.TestCase):
         self.assertTrue(is_qa_agent(payload["agents"][0]))
         self.assertFalse(is_qa_agent(payload["agents"][1]))
         self.assertFalse(is_qa_agent({"key": "cfo-jurisdiccion-b", "role": "fiscalidad y estructura transfronteriza"}))
-        rows = agents_from_team(payload, [{"id": "eng-qa", "voice_id": "builtin-elena"}])
+        rows = agents_from_team(payload, [{
+            "id": "eng-qa",
+            "voice_id": "builtin-elena",
+            "elevenlabs_voice_id": "voice123",
+            "elevenlabs_name": "Aina · Ginebra",
+        }])
         self.assertEqual(rows[0]["clave"], "Aina")
         self.assertEqual(rows[0]["voice_id"], "builtin-elena")
+        self.assertEqual(rows[0]["elevenlabs_voice_id"], "voice123")
+        self.assertEqual(rows[0]["elevenlabs_name"], "Aina · Ginebra")
         self.assertTrue(rows[0]["qa"])
         self.assertEqual(rows[0]["department"], "Ingeniería")
         self.assertEqual(rows[1]["modelo"], "opus")
@@ -292,6 +299,16 @@ class StudioTest(unittest.TestCase):
         self.assertIn("API_KEY", redact("fallo sk_file_secret_9876"))
         jarvis = voice_for_agent({"id": "jarvis", "clave": "Jarvis", "voice_id": ""})
         self.assertEqual(jarvis, JARVIS_VOICE)
+        custom = voice_for_agent({"id": "jarvis", "clave": "Jarvis", "elevenlabs_voice_id": "Napy7oPOT7uxUgaYsCYg"})
+        self.assertEqual(custom, "Napy7oPOT7uxUgaYsCYg")
+        from studio.elevenlabs import nearest_voice
+        created = [
+            {"gender": "woman", "accent_i": 0, "voice_id": "mx", "name": "México"},
+            {"gender": "woman", "accent_i": 16, "voice_id": "ny", "name": "Nueva York"},
+            {"gender": "man", "accent_i": 1, "voice_id": "ba", "name": "Buenos Aires"},
+        ]
+        self.assertEqual(nearest_voice("woman", 1, created)["voice_id"], "mx")
+        self.assertEqual(nearest_voice("man", 17, created)["voice_id"], "ba")
         woman = voice_for_speech("builtin-elena", None)
         man = voice_for_speech("builtin-hugo", None)
         self.assertNotEqual(woman, man)

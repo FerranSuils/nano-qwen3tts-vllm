@@ -425,7 +425,7 @@ curl -X POST http://127.0.0.1:8000/v1/audio/speech \
         <td>${esc(agent.rol)}</td>
         <td>${esc(agent.department || "")}</td>
         <td>${esc(agent.modelo)}</td>
-        <td><code>${esc(agent.voice_id || "—")}</code></td>
+        <td><code>${esc(agent.voice_id || "—")}</code>${agent.elevenlabs_name ? `<div class="sub">${esc(agent.elevenlabs_name)}</div>` : ""}</td>
         <td>${esc(agent.estado)}${agent.last_qa ? `<div class="sub">TestSprite ${esc(agent.last_qa.accepted)} casos</div>` : ""}</td>
         <td>
           <button type="button" data-simulate="${esc(agent.id)}" ${agent.voice_id || speechReady ? "" : "disabled"}>Simular</button>

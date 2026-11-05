@@ -189,6 +189,7 @@ def _clean_voice(raw: dict, *, source: str, voice_id: str | None = None) -> dict
         "traits": traits,
         "source": source,
         "provider": raw.get("provider") or "",
+        "elevenlabs_voice_id": str(raw.get("elevenlabs_voice_id") or "").strip()[:40],
     }
 
 
@@ -229,6 +230,10 @@ def get_voice(voice_id: str) -> dict | None:
 
 def save_voice(raw: dict, *, source: str = "manual") -> dict:
     voice = _clean_voice(raw, source=source, voice_id=raw.get("id") if raw.get("id") else None)
+    if not voice["elevenlabs_voice_id"]:
+        previous = next((item for item in load_state().get("voices") or [] if item.get("id") == voice["id"]), None)
+        if previous and previous.get("elevenlabs_voice_id"):
+            voice["elevenlabs_voice_id"] = str(previous["elevenlabs_voice_id"])
 
     def mutate(state: dict) -> None:
         voices = [item for item in state["voices"] if item.get("id") != voice["id"]]

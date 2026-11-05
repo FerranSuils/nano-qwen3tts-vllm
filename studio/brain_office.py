@@ -230,6 +230,8 @@ def agents_from_team(payload: dict, previous: list[dict]) -> list[dict]:
         if isinstance(item, dict)
     }
     voices = {str(item.get("id")): str(item.get("voice_id") or "") for item in previous}
+    eleven_ids = {str(item.get("id")): str(item.get("elevenlabs_voice_id") or "") for item in previous}
+    eleven_names = {str(item.get("id")): str(item.get("elevenlabs_name") or "") for item in previous}
     notes = {str(item.get("id")): item.get("last_qa") for item in previous if item.get("last_qa")}
     rows = []
     for agent in payload.get("agents") or []:
@@ -247,6 +249,8 @@ def agents_from_team(payload: dict, previous: list[dict]) -> list[dict]:
             "modelo": str(agent.get("model") or agent.get("model_tier") or "").strip()[:120],
             "estado": "activo" if enabled else "inactivo",
             "voice_id": voices.get(key, ""),
+            "elevenlabs_voice_id": eleven_ids.get(key, ""),
+            "elevenlabs_name": eleven_names.get(key, ""),
             "department": departments.get(str(agent.get("department")), str(agent.get("department") or ""))[:80],
             "qa": is_qa_agent(agent),
             "source": "brain",
