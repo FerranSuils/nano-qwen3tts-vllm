@@ -88,7 +88,17 @@ def _primary_casts(agents: list[dict]) -> list[dict]:
             preferred = -1
         return (preferred, item["clave"])
     rows.sort(key=rank)
-    return rows
+    # One saved design per country. Several agents share an accent, and the
+    # account only has a handful of voice slots.
+    picked = []
+    seen = set()
+    for item in rows:
+        token = "jarvis" if item["clave"].lower() == "jarvis" else item["accent_i"]
+        if token in seen:
+            continue
+        seen.add(token)
+        picked.append(item)
+    return picked
 
 
 def link() -> dict:
