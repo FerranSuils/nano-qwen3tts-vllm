@@ -821,9 +821,23 @@ async def generate_speech(request: SpeechRequest, authorization: str | None = He
         if get_voice(request.voice_id) is None:
             raise HTTPException(status_code=404, detail=f"Designed voice '{request.voice_id}' not found")
     if not _tts_ready:
+        from studio.zerogpu_tts import available, speech_pcm
+        if available():
+            try:
+                pcm = await asyncio.to_thread(speech_pcm, request)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+            except Exception as exc:
+                detail = re.sub(r"hf_[A-Za-z0-9]+", "HF_TOKEN", str(exc))[:300]
+                raise HTTPException(status_code=502, detail=f"ZeroGPU: {detail}") from exc
+            return StreamingResponse(
+                iter([pcm]),
+                media_type="audio/L16",
+                headers={"Sample-Rate": str(TARGET_SAMPLE_RATE), "X-TTS-Backend": "zerogpu"},
+            )
         raise HTTPException(
             status_code=503,
-            detail="TTS engine is not loaded. On a CUDA machine set TTS_EAGER_LOAD=1. Voice design stays available at /ui and POST /v1/voices/design.",
+            detail="No hay GPU local. Define ZEROGPU_SPACE para hablar con el Space de Hugging Face.",
         )
     try:
         return StreamingResponse(

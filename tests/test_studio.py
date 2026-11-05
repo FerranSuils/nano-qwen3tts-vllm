@@ -39,6 +39,14 @@ class StudioTest(unittest.TestCase):
         self.home.cleanup()
         self.workflow.cleanup()
 
+    def test_zerogpu_is_opt_in(self):
+        from studio.zerogpu_tts import available
+        os.environ.pop("ZEROGPU_SPACE", None)
+        self.assertFalse(available())
+        os.environ["ZEROGPU_SPACE"] = "ferransuils/qwen3-tts-voices"
+        self.assertTrue(available())
+        os.environ.pop("ZEROGPU_SPACE", None)
+
     def test_catalog_covers_the_requested_backends(self):
         from studio.providers import PROVIDERS
         ids = {spec.id for spec in PROVIDERS}
