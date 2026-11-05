@@ -97,8 +97,9 @@ def save_connection(fields: dict) -> dict:
 
 
 def is_qa_agent(agent: dict) -> bool:
+    """QA is the testing seat, not every role that mentions a check in its long brief."""
     key = str(agent.get("key") or agent.get("brain_key") or agent.get("id") or "").lower()
-    role = f"{agent.get('role') or ''} {agent.get('rol') or ''} {agent.get('description') or ''}".lower()
+    role = str(agent.get("role") or agent.get("rol") or "").lower()
     if key.endswith("-qa") or key.startswith("qa-") or "-qa-" in key:
         return True
     return any(word in role for word in ("prueba", "testea", "tester", "calidad"))

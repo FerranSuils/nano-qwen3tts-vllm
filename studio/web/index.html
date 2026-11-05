@@ -434,7 +434,7 @@ curl -X POST http://127.0.0.1:8000/v1/audio/speech \
         await api("/v1/office/connection", { method: "PUT", body: JSON.stringify(body) });
         $("brainKey").value = "";
         $("spriteKey").value = "";
-        paintOffice(await api("/v1/office/sync", { method: "POST" }));
+        paintOffice(await api("/v1/office/sync", { method: "POST", body: "{}" }));
       } catch (err) {
         $("officeError").textContent = err.message;
       }
@@ -442,14 +442,14 @@ curl -X POST http://127.0.0.1:8000/v1/audio/speech \
 
     $("syncOffice").addEventListener("click", async () => {
       $("officeError").textContent = "";
-      try { paintOffice(await api("/v1/office/sync", { method: "POST" })); }
+      try { paintOffice(await api("/v1/office/sync", { method: "POST", body: "{}" })); }
       catch (err) { $("officeError").textContent = err.message; }
     });
 
     $("runQa").addEventListener("click", async () => {
       $("qaResult").textContent = "Aina y el resto de QA están lanzando TestSprite…";
       try {
-        const result = await api("/v1/office/qa/testsprite", { method: "POST" });
+        const result = await api("/v1/office/qa/testsprite", { method: "POST", body: "{}" });
         const note = result.testsprite || {};
         $("qaResult").textContent = (result.qa_agents || []).join(", ") + " lanzaron " + (note.accepted || 0) + " casos. " + (note.dashboard || "");
         await loadRoster();
