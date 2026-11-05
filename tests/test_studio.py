@@ -199,6 +199,7 @@ class StudioTest(unittest.TestCase):
         }
         self.assertTrue(is_qa_agent(payload["agents"][0]))
         self.assertFalse(is_qa_agent(payload["agents"][1]))
+        self.assertFalse(is_qa_agent({"key": "cfo-jurisdiccion-b", "role": "fiscalidad y estructura transfronteriza"}))
         rows = agents_from_team(payload, [{"id": "eng-qa", "voice_id": "builtin-elena"}])
         self.assertEqual(rows[0]["clave"], "Aina")
         self.assertEqual(rows[0]["voice_id"], "builtin-elena")

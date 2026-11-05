@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
 import urllib.error
 import urllib.request
@@ -102,12 +103,16 @@ def is_qa_agent(agent: dict) -> bool:
     role = str(agent.get("role") or agent.get("rol") or "").lower()
     if key.endswith("-qa") or key.startswith("qa-") or "-qa-" in key:
         return True
-    return any(word in role for word in ("prueba", "testea", "tester", "calidad"))
+    words = set(re.findall(r"[a-záéíóúüñ]+", role))
+    return bool(words & {"prueba", "pruebas", "testea", "tester", "testers", "calidad"})
 
 
 def _http_json(method: str, url: str, headers: dict, payload: dict | None, timeout: float) -> dict:
     data = None if payload is None else json.dumps(payload).encode("utf-8")
-    request = urllib.request.Request(url, data=data, headers=headers, method=method)
+    sent = dict(headers)
+    if data is not None:
+        sent.setdefault("Content-Type", "application/json")
+    request = urllib.request.Request(url, data=data, headers=sent, method=method)
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             body = response.read().decode("utf-8", errors="replace")
