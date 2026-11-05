@@ -99,8 +99,9 @@ def studio_page():
     return FileResponse(_WEB, media_type="text/html; charset=utf-8")
 
 
-@router.get("/v1/providers")
+@router.get("/v1/providers", summary="List available reasoning providers")
 def get_providers(authorization: str | None = Header(default=None)):
+    """Return the reasoning providers this studio can use, with secrets masked."""
     require_studio(authorization)
     return providers.list_public_providers()
 
