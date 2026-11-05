@@ -88,8 +88,10 @@ def _primary_casts(agents: list[dict]) -> list[dict]:
             preferred = -1
         return (preferred, item["clave"])
     rows.sort(key=rank)
-    # One saved design per country. Several agents share an accent, and the
-    # account only has a handful of voice slots.
+    return rows
+
+
+def _one_per_country(rows: list[dict]) -> list[dict]:
     picked = []
     seen = set()
     for item in rows:
@@ -101,60 +103,86 @@ def _primary_casts(agents: list[dict]) -> list[dict]:
     return picked
 
 
+def _covered(voices: list[dict]) -> dict:
+    """Accents that already have a saved design, keyed by country index or 'jarvis'."""
+    found = {}
+    for voice in voices:
+        name = voice.get("name") or ""
+        if "jarvis" in name.lower():
+            found["jarvis"] = voice
+        if " · " not in name:
+            continue
+        place = name.split(" · ", 1)[1].split("(")[0].strip()
+        for index, (accent_name, _detail) in enumerate(ACCENTS):
+            if place == accent_name:
+                found.setdefault(index, voice)
+    return found
+
+
 def link() -> dict:
     _load_env()
     agents = list(load_state().get("agents") or [])
     if len(agents) < 1:
         raise SystemExit("No hay agentes en el estudio")
-    casts = _primary_casts(agents)
-    by_name = {item["name"]: item["voice_id"] for item in account_voices() if item.get("voice_id")}
+    profiles = _primary_casts(agents)
+    by_clave = {item["clave"]: item for item in profiles}
+    covered = _covered(account_voices())
     used, limit = slot_usage()
     created: list[dict] = []
     made = 0
-    for cast in casts:
-        voice_id = by_name.get(cast["name"], "")
-        if not voice_id and used < limit:
-            try:
-                voice_id = create_designed_voice(
-                    name=cast["name"],
-                    description=cast["description"],
-                    text=cast["text"],
-                    seed=cast["seed"],
-                    labels={
-                        "agent": cast["clave"],
-                        "accent": cast["place"],
-                        "gender": cast["gender"],
-                        "language": "es",
-                    },
-                )
-            except ElevenLabsError as exc:
-                print(f"skip {cast['name']}: {exc}")
-                if getattr(exc, "status", 0) in (400, 403):
-                    break
-                continue
-            used += 1
-            made += 1
-            by_name[cast["name"]] = voice_id
-            print(f"created {cast['name']} {voice_id} slots {used}/{limit}")
-        if not voice_id:
+    for cast in _one_per_country(profiles):
+        token = "jarvis" if cast["clave"].lower() == "jarvis" else cast["accent_i"]
+        existing = covered.get(token)
+        if existing:
+            created.append({
+                **cast,
+                "voice_id": existing["voice_id"],
+                "name": existing["name"],
+            })
             continue
+        if used >= limit:
+            continue
+        try:
+            voice_id = create_designed_voice(
+                name=cast["name"],
+                description=cast["description"],
+                text=cast["text"],
+                seed=cast["seed"],
+                labels={
+                    "agent": cast["clave"],
+                    "accent": cast["place"],
+                    "gender": cast["gender"],
+                    "language": "es",
+                },
+            )
+        except ElevenLabsError as exc:
+            print(f"skip {cast['name']}: {exc}")
+            if getattr(exc, "status", 0) in (400, 403):
+                break
+            continue
+        used += 1
+        made += 1
+        saved = {"voice_id": voice_id, "name": cast["name"]}
+        covered[token] = saved
         created.append({**cast, "voice_id": voice_id})
+        print(f"created {cast['name']} {voice_id} slots {used}/{limit}")
 
     if not created:
         raise SystemExit("No se pudo guardar ninguna voz")
 
-    exact = {item["clave"]: item for item in created}
-
     def mutate(state: dict) -> None:
-        by_id = {item["id"]: item for item in state["agents"]}
         for agent in state["agents"]:
-            chosen = exact.get(agent["clave"])
-            if chosen is None:
-                primary = next(item for item in casts if item["clave"] == agent["clave"])
-                chosen = nearest_voice(primary["gender"], primary["accent_i"], created)
+            primary = by_clave.get(agent["clave"])
+            if primary is None:
+                continue
+            owned = next((
+                item for item in created
+                if item["name"].startswith(agent["clave"] + " ·")
+                or (agent["clave"].lower() == "jarvis" and "jarvis" in item["name"].lower())
+            ), None)
+            chosen = owned or nearest_voice(primary["gender"], primary["accent_i"], created)
             agent["elevenlabs_voice_id"] = chosen["voice_id"]
             agent["elevenlabs_name"] = chosen["name"]
-            by_id[agent["id"]] = agent
         for voice in state.get("voices") or []:
             owner = next((item for item in state["agents"] if item.get("voice_id") == voice.get("id")), None)
             if owner and owner.get("elevenlabs_voice_id"):
