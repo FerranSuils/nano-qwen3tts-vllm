@@ -297,6 +297,55 @@ python -m uvicorn examples.server:app --host 0.0.0.0 --port 8000
 python examples/server.py
 ```
 
+The same process serves a click UI at [http://127.0.0.1:8000/ui](http://127.0.0.1:8000/ui) and the provider API under `/v1/providers`. On a machine without CUDA the weights stay unloaded (`TTS_EAGER_LOAD=auto`) so the studio still comes up; speech returns 503 until a GPU is available. `POST /v1/audio/speech` is unchanged for `speaker` and voice-clone pickles, and also accepts `voice_id` or `instruct` for VoiceDesign.
+
+### Reasoning providers and infinite voices
+
+Qwen3-TTS speaks. A separate chat backend writes the voice instruct, so each person can have a different timbre instead of sharing the nine preset speakers. The plan and the wire contract are in [`docs/plan-estudio-de-voces.md`](docs/plan-estudio-de-voces.md). The office at [https://ai.nordicbyte.co.uk/](https://ai.nordicbyte.co.uk/) keeps its own `brain` CLI login; this server exposes the roster columns (`clave`, `rol`, `modelo`, `estado`) plus `voice_id`.
+
+Hugging Face, for downloading weights and optionally for chat via the router:
+
+```bash
+# Log in to your Hugging Face account, then:
+export HF_TOKEN=<YOUR_HUGGINGFACE_TOKEN>
+```
+
+Other reasoners use the same studio (web, CLI, or `PUT /v1/providers/{id}`). Environment variables win over keys saved in `.nano-qwen3tts/studio.json` (mode 0600, gitignored):
+
+| Provider | Variable | Default base URL |
+|---|---|---|
+| Hugging Face | `HF_TOKEN` | `https://router.huggingface.co/v1` |
+| Claude API | `ANTHROPIC_API_KEY` | `https://api.anthropic.com` |
+| OpenRouter | `OPENROUTER_API_KEY` | `https://openrouter.ai/api/v1` |
+| SiliconFlow | `SILICONFLOW_API_KEY` | `https://api.siliconflow.cn/v1` |
+| Vertex AI | `VERTEX_API_KEY` plus project and region | Vertex OpenAI endpoint |
+| Gemini | `GEMINI_API_KEY` | `https://generativelanguage.googleapis.com/v1beta/openai` |
+| Ollama | none | `http://127.0.0.1:11434/v1` |
+| vLLM | `VLLM_API_KEY` optional | `http://127.0.0.1:8001/v1` |
+| Docker Model Runner | none | `http://127.0.0.1:12434/engines/v1` |
+| Google Colab | `COLAB_BASE_URL` | the notebook tunnel, ending in `/v1` |
+| Groq, Together, DeepSeek, Fireworks, any OpenAI-compatible server | see the provider card | editable |
+
+Saving a Claude key (`export ANTHROPIC_API_KEY=...` or the form) writes `.claude/agents`, `.claude/skills` (voice design, speak, Nordic Byte office) and `.claude/workflows/infinite-voices.json`. Files you have edited are left in place unless you force the write.
+
+```bash
+python -m studio.cli providers
+python -m studio.cli design "Mujer de Madrid, 34 años, cercana, sin prisa" --language Spanish
+```
+
+```bash
+curl -s -X POST http://127.0.0.1:8000/v1/voices/design \
+  -H 'content-type: application/json' \
+  -d '{"brief":"Mujer de Madrid, 34 años, cercana","language":"Spanish","save":true}'
+
+curl -X POST http://127.0.0.1:8000/v1/audio/speech \
+  -H 'content-type: application/json' \
+  -d '{"text":"Hola, te cuento cómo lo veo.","voice_id":"builtin-elena","language":"Spanish"}' \
+  --output elena.pcm
+```
+
+Set `STUDIO_API_TOKEN` to require `Authorization: Bearer` on the studio routes. The speech route is not behind that token. CORS allows `https://ai.nordicbyte.co.uk` (override with `STUDIO_CORS_ORIGINS`).
+
 ## Options
 
 | Parameter | Description |
