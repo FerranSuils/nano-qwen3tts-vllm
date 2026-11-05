@@ -14,7 +14,8 @@ from fastapi import APIRouter, Header, HTTPException
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, Field
 
-from studio import brain_office, claude_workflow, office, providers, qa_testsprite, voices
+from studio import brain_office, claude_workflow, elevenlabs, office, providers, qa_testsprite, voices
+from studio.store import studio_home
 
 router = APIRouter()
 _WEB = Path(__file__).resolve().parent / "web" / "index.html"
@@ -241,6 +242,31 @@ def post_qa(authorization: str | None = Header(default=None)):
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
+class SpeechEngineUpdate(BaseModel):
+    api_key: str | None = None
+    clear_api_key: bool = False
+
+
+@router.get("/v1/speech/engine")
+def get_speech_engine(authorization: str | None = Header(default=None)):
+    """Which engine speaks. The ElevenLabs key is masked."""
+    require_studio(authorization)
+    return elevenlabs.public_status()
+
+
+@router.put("/v1/speech/engine")
+def put_speech_engine(body: SpeechEngineUpdate, authorization: str | None = Header(default=None)):
+    require_studio(authorization)
+    saved = elevenlabs.save_key(body.api_key, clear=body.clear_api_key)
+    if saved["api_key_set"] and body.api_key:
+        # Drop any previous preview so the new key is what speaks next.
+        clip_dir = studio_home() / "clips"
+        if clip_dir.is_dir():
+            for path in clip_dir.glob("*.eleven.wav"):
+                path.unlink(missing_ok=True)
+    return saved
+
+
 @router.post("/v1/office/agents/{agent_id}/simulate")
 def simulate_agent(agent_id: str, authorization: str | None = Header(default=None)):
     """Speak one line about this agent's role and area, in their assigned voice."""
@@ -248,39 +274,52 @@ def simulate_agent(agent_id: str, authorization: str | None = Header(default=Non
     agent = next((item for item in office.list_agents() if item["id"] == agent_id), None)
     if agent is None:
         raise HTTPException(status_code=404, detail=f"No existe el agente '{agent_id}'")
-    if not agent.get("voice_id"):
+    use_eleven = elevenlabs.available()
+    if not agent.get("voice_id") and not use_eleven:
         raise HTTPException(status_code=400, detail=f"{agent.get('clave') or agent_id} no tiene voz asignada")
-    from studio.zerogpu_tts import available, speech_pcm
-    if not available():
-        raise HTTPException(status_code=503, detail="ZeroGPU no está configurado")
     text = office.sample_line(agent)
-    cache = Path(__file__).resolve().parents[1] / ".nano-qwen3tts" / "clips"
+    cache = studio_home() / "clips"
     cache.mkdir(parents=True, exist_ok=True)
-    cached = cache / f"{agent_id}.wav"
+    cached = cache / (f"{agent_id}.eleven.wav" if use_eleven else f"{agent_id}.wav")
+    backend = "elevenlabs" if use_eleven else "zerogpu"
     if cached.is_file() and cached.stat().st_size > 44:
         return Response(
             content=cached.read_bytes(),
             media_type="audio/wav",
-            headers={"X-Sample-Line": quote(text), "X-Voice-Cache": "hit"},
+            headers={
+                "X-Sample-Line": quote(text),
+                "X-Voice-Cache": "hit",
+                "X-TTS-Backend": backend,
+            },
         )
 
-    class _Speech:
-        pass
+    if use_eleven:
+        try:
+            pcm = elevenlabs.speech_pcm(text, elevenlabs.voice_for_agent(agent))
+        except elevenlabs.ElevenLabsError as exc:
+            raise HTTPException(status_code=502, detail=elevenlabs.redact(str(exc))[:300]) from exc
+    else:
+        from studio.zerogpu_tts import available, speech_pcm
+        if not available():
+            raise HTTPException(status_code=503, detail="ZeroGPU no está configurado")
 
-    request = _Speech()
-    request.text = text
-    request.voice_id = agent["voice_id"]
-    request.instruct = None
-    request.language = "Spanish"
-    try:
-        pcm = speech_pcm(request)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except Exception as exc:
-        detail = str(exc)
-        if "hf_" in detail:
-            detail = "error de ZeroGPU"
-        raise HTTPException(status_code=502, detail=detail[:300]) from exc
+        class _Speech:
+            pass
+
+        request = _Speech()
+        request.text = text
+        request.voice_id = agent["voice_id"]
+        request.instruct = None
+        request.language = "Spanish"
+        try:
+            pcm = speech_pcm(request)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except Exception as exc:
+            detail = str(exc)
+            if "hf_" in detail:
+                detail = "error de ZeroGPU"
+            raise HTTPException(status_code=502, detail=detail[:300]) from exc
     buffer = io.BytesIO()
     with wave.open(buffer, "wb") as handle:
         handle.setnchannels(1)
@@ -292,7 +331,11 @@ def simulate_agent(agent_id: str, authorization: str | None = Header(default=Non
     return Response(
         content=wav,
         media_type="audio/wav",
-        headers={"X-Sample-Line": quote(text), "X-Voice-Cache": "miss"},
+        headers={
+            "X-Sample-Line": quote(text),
+            "X-Voice-Cache": "miss",
+            "X-TTS-Backend": backend,
+        },
     )
 
 

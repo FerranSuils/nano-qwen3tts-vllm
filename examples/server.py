@@ -816,10 +816,32 @@ async def generate_speech(request: SpeechRequest, authorization: str | None = He
     The caller must be a brain office user.
     """
     _require_office_user(authorization)
-    if request.voice_id:
-        from studio.voices import get_voice
-        if get_voice(request.voice_id) is None:
-            raise HTTPException(status_code=404, detail=f"Designed voice '{request.voice_id}' not found")
+    from studio import elevenlabs
+    from studio.voices import get_voice
+    if request.voice_id and get_voice(request.voice_id) is None and request.voice_id not in elevenlabs.known_ids():
+        raise HTTPException(status_code=404, detail=f"Designed voice '{request.voice_id}' not found")
+    if elevenlabs.available():
+        voice = elevenlabs.voice_for_speech(request.voice_id, request.instruct)
+        try:
+            stream = elevenlabs.open_stream(request.text, voice)
+        except elevenlabs.ElevenLabsError as exc:
+            raise HTTPException(status_code=502, detail=elevenlabs.redact(str(exc))[:300]) from exc
+
+        def pcm_chunks():
+            try:
+                while True:
+                    chunk = stream.read(4800)
+                    if not chunk:
+                        break
+                    yield chunk
+            finally:
+                stream.close()
+
+        return StreamingResponse(
+            pcm_chunks(),
+            media_type="audio/L16",
+            headers={"Sample-Rate": str(TARGET_SAMPLE_RATE), "X-TTS-Backend": "elevenlabs"},
+        )
     if not _tts_ready:
         from studio.zerogpu_tts import available, speech_pcm
         if available():
