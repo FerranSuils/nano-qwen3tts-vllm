@@ -1,0 +1,52 @@
+{
+  "name": "infinite-voices",
+  "compatible_with": "https://ai.nordicbyte.co.uk/",
+  "summary": "Reason about a person, cast a distinct Qwen3-TTS instruct, bind it to an office agent, then speak.",
+  "steps": [
+    {
+      "id": "cast",
+      "agent": "voice-designer",
+      "skill": "voice-design",
+      "does": "POST /v1/voices/design and keep the voice only if it would not be confused with one already in the library"
+    },
+    {
+      "id": "bind",
+      "agent": "office-liaison",
+      "skill": "nordicbyte-office",
+      "does": "POST /v1/office/agents with clave, rol, modelo, estado, voice_id"
+    },
+    {
+      "id": "write",
+      "agent": "dialogue-director",
+      "skill": "speak",
+      "does": "Write one to three spoken sentences in the voice's language"
+    },
+    {
+      "id": "speak",
+      "agent": "dialogue-director",
+      "skill": "speak",
+      "does": "POST /v1/audio/speech with voice_id. PCM 16-bit mono 24 kHz"
+    }
+  ],
+  "providers": [
+    "huggingface",
+    "claude",
+    "openrouter",
+    "siliconflow",
+    "vertex",
+    "gemini",
+    "ollama",
+    "vllm",
+    "docker",
+    "colab",
+    "groq",
+    "together",
+    "deepseek",
+    "fireworks",
+    "custom"
+  ],
+  "secrets": {
+    "huggingface": "export HF_TOKEN=<YOUR_HUGGINGFACE_TOKEN>",
+    "claude": "export ANTHROPIC_API_KEY=<YOUR_CLAUDE_API_KEY>"
+  }
+}

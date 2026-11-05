@@ -8,3 +8,6 @@ wheels/
 
 # Virtual environments
 .venv
+
+# Studio secrets (API keys). Never commit.
+.nano-qwen3tts/

@@ -1077,7 +1077,49 @@ class Qwen3TTSInterface:
             SamplingParams(temperature=1.0, max_tokens=1),
             SamplingParams(temperature=0.9, max_tokens=17),
         )
-    
+
+    async def generate_voice_design_async(
+        self,
+        text: str,
+        instruct: str,
+        language: str = None,
+        non_streaming_mode: bool = True,
+    ):
+        """Async voice design. Requires ``await start_zmq_tasks()`` first.
+
+        Same prompt path as ``generate_voice_design``: instruct only, no speaker
+        embedding, so a designed voice is not pinned to a CustomVoice timbre.
+        """
+        if not (self._use_mp_engines and self._mp_holder is not None):
+            raise RuntimeError("generate_voice_design_async requires start_zmq_tasks() to be called first")
+        if language is None:
+            language = "Auto"
+
+        input_ids, instruct_ids, _speakers, languages = prepare_custom_voice_prompt(
+            text=[text],
+            speaker=[""],
+            language=[language],
+            instruct=[instruct],
+            processor=self.processor,
+            device=self.device,
+        )
+        talker_input_embeds, trailing_text_hiddens, tts_pad_embed, talker_attention_mask = prepare_inputs(
+            config=self.model_config,
+            input_ids=input_ids,
+            instruct_ids=instruct_ids,
+            languages=languages,
+            speakers=None,
+            non_streaming_mode=non_streaming_mode,
+            text_embedding=self.text_embedding,
+            input_embedding=self.input_embedding,
+            text_projection=self.text_projection,
+            device=self.device,
+        )
+        async for chunk in self.generate_async(
+            talker_input_embeds, trailing_text_hiddens, tts_pad_embed, talker_attention_mask
+        ):
+            yield chunk
+
     async def start_zmq_tasks(self) -> None:
         """Start multiprocess engines (talker + predictor workers) and asyncio orchestrator loops."""
         if self._zmq_tasks_started:

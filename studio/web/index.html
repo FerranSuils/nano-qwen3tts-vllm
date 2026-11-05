@@ -1,0 +1,445 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Estudio de voces · nano-qwen3tts</title>
+  <style>
+    :root {
+      --bg: #12110f;
+      --bg-2: #1c1a17;
+      --line: #3a342c;
+      --text: #f3efe6;
+      --muted: #b3a898;
+      --accent: #e7a15a;
+      --ok: #8fbf8a;
+      --bad: #e07a6a;
+      --chip: #2a261f;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font: 15px/1.45 "Segoe UI", system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+    }
+    header, main { width: min(1100px, calc(100% - 32px)); margin: 0 auto; }
+    header { padding: 28px 0 8px; display: flex; justify-content: space-between; gap: 16px; align-items: end; }
+    h1 { font-size: 22px; font-weight: 600; margin: 0; }
+    h2 { font-size: 16px; margin: 0 0 12px; }
+    a { color: var(--accent); }
+    .sub { color: var(--muted); margin: 6px 0 0; }
+    nav { display: flex; gap: 8px; padding: 16px 0; }
+    nav button, button, .ghost {
+      background: var(--chip);
+      color: var(--text);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 8px 12px;
+      cursor: pointer;
+    }
+    nav button[aria-selected="true"], button.primary { background: var(--accent); color: #1a1208; border-color: transparent; }
+    button.danger { color: var(--bad); }
+    section { display: none; padding-bottom: 48px; }
+    section.active { display: block; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; }
+    article, .panel, tr, .card {
+      background: var(--bg-2);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+    }
+    article { padding: 14px; }
+    label { display: block; font-size: 12px; color: var(--muted); margin: 10px 0 4px; }
+    input, textarea, select {
+      width: 100%;
+      background: #0e0d0b;
+      color: var(--text);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 8px 10px;
+    }
+    textarea { min-height: 90px; resize: vertical; }
+    .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 12px; }
+    .pill { font-size: 12px; border-radius: 99px; padding: 2px 8px; background: var(--chip); color: var(--muted); }
+    .pill.ok { color: var(--ok); }
+    .pill.bad { color: var(--bad); }
+    .steps { margin: 8px 0; padding-left: 18px; color: var(--muted); }
+    .steps code, code { font-family: ui-monospace, monospace; font-size: 12px; color: var(--text); }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+    th { color: var(--muted); font-weight: 500; font-size: 12px; }
+    .panel { padding: 14px; margin-bottom: 14px; }
+    .error { color: var(--bad); white-space: pre-wrap; }
+    .export { font-family: ui-monospace, monospace; font-size: 12px; word-break: break-all; }
+    .split { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    @media (max-width: 800px) { .split { grid-template-columns: 1fr; } header { flex-direction: column; align-items: start; } }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>Estudio de voces</h1>
+      <p class="sub">Mismo servidor que <code>POST /v1/audio/speech</code>. Compatible con <a href="https://ai.nordicbyte.co.uk/">ai.nordicbyte.co.uk</a>.</p>
+    </div>
+    <div>
+      <label for="studioToken">Token del estudio (si definiste STUDIO_API_TOKEN)</label>
+      <input id="studioToken" type="password" autocomplete="off" placeholder="opcional" />
+    </div>
+  </header>
+  <main>
+    <nav>
+      <button type="button" data-tab="providers" aria-selected="true">Proveedores</button>
+      <button type="button" data-tab="voices" aria-selected="false">Voces</button>
+      <button type="button" data-tab="office" aria-selected="false">Oficina</button>
+      <button type="button" data-tab="api" aria-selected="false">API</button>
+    </nav>
+    <p id="banner" class="sub"></p>
+
+    <section id="providers" class="active">
+      <div class="panel">
+        <h2>Razonador activo</h2>
+        <p class="sub">Es quien escribe el instruct de una voz nueva. El audio lo sigue poniendo Qwen3-TTS.</p>
+        <label for="active">Proveedor</label>
+        <select id="active"></select>
+        <div class="row"><button type="button" class="primary" id="saveActive">Usar este</button></div>
+      </div>
+      <div id="providerGrid" class="grid"></div>
+    </section>
+
+    <section id="voices">
+      <div class="split">
+        <div class="panel">
+          <h2>Diseñar una voz</h2>
+          <label for="brief">Quién es</label>
+          <textarea id="brief" placeholder="Hombre de 46 años de Bilbao, voz gastada, habla poco y despacio"></textarea>
+          <label for="voiceLanguage">Idioma de la frase</label>
+          <select id="voiceLanguage">
+            <option>Auto</option><option>Spanish</option><option>English</option><option>Chinese</option>
+            <option>Japanese</option><option>Korean</option><option>German</option><option>French</option>
+            <option>Russian</option><option>Portuguese</option><option>Italian</option>
+          </select>
+          <label for="voiceProvider">Razonador</label>
+          <select id="voiceProvider"></select>
+          <div class="row"><button type="button" class="primary" id="designBtn">Diseñar y guardar</button></div>
+          <p id="designError" class="error"></p>
+          <div id="designResult"></div>
+        </div>
+        <div class="panel">
+          <h2>Guardar un instruct a mano</h2>
+          <label for="manualName">Nombre</label>
+          <input id="manualName" />
+          <label for="manualInstruct">Instruct</label>
+          <textarea id="manualInstruct"></textarea>
+          <label for="manualLanguage">Idioma</label>
+          <input id="manualLanguage" value="Spanish" />
+          <div class="row"><button type="button" id="manualSave">Guardar</button></div>
+        </div>
+      </div>
+      <div class="panel">
+        <h2>Biblioteca</h2>
+        <div id="voiceList"></div>
+      </div>
+    </section>
+
+    <section id="office">
+      <div class="panel">
+        <h2>Agente de la oficina</h2>
+        <p class="sub">La oficina entra con el CLI <code>brain</code>. Aquí asignas la voz que ese agente usa en este servidor.</p>
+        <div class="split">
+          <div>
+            <label for="clave">Clave</label>
+            <input id="clave" placeholder="Elena" />
+          </div>
+          <div>
+            <label for="department">Área</label>
+            <input id="department" placeholder="Finanzas" />
+          </div>
+        </div>
+        <label for="rol">Rol</label>
+        <input id="rol" placeholder="explica el cierre sin prisa" />
+        <label for="modelo">Modelo de razonamiento</label>
+        <input id="modelo" placeholder="claude-sonnet-4-5" />
+        <label for="agentVoice">Voz</label>
+        <select id="agentVoice"></select>
+        <div class="row"><button type="button" class="primary" id="addAgent">Añadir</button></div>
+        <p id="officeError" class="error"></p>
+      </div>
+      <div class="panel" style="overflow-x:auto">
+        <table>
+          <thead>
+            <tr><th>Clave</th><th>Rol</th><th>Modelo</th><th>Voz</th><th>Estado</th><th></th></tr>
+          </thead>
+          <tbody id="roster"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="api">
+      <div class="panel">
+        <h2>Lo que ya había, más la voz diseñada</h2>
+        <pre class="export">export HF_TOKEN=&lt;YOUR_HUGGINGFACE_TOKEN&gt;
+export ANTHROPIC_API_KEY=&lt;YOUR_CLAUDE_API_KEY&gt;
+
+curl -s http://127.0.0.1:8000/v1/providers
+curl -s -X POST http://127.0.0.1:8000/v1/voices/design \
+  -H 'content-type: application/json' \
+  -d '{"brief":"Mujer de Madrid, 34 años, cercana","language":"Spanish","save":true}'
+
+curl -X POST http://127.0.0.1:8000/v1/audio/speech \
+  -H 'content-type: application/json' \
+  -d '{"text":"Hola, te cuento cómo lo veo.","voice_id":"builtin-elena","language":"Spanish"}' \
+  --output elena.pcm</pre>
+        <p class="sub">El PCM es 16-bit mono a 24 kHz, igual que antes. <code>speaker</code> sigue valiendo para Vivian y para los <code>.pkl</code> de <code>examples/voices</code>.</p>
+        <p class="sub">Al guardar la clave de Claude se escriben <code>.claude/agents</code>, <code>.claude/skills</code> y <code>workflows/infinite-voices.json</code>.</p>
+      </div>
+    </section>
+  </main>
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const tokenInput = $("studioToken");
+    tokenInput.value = localStorage.getItem("studioToken") || "";
+    tokenInput.addEventListener("change", () => localStorage.setItem("studioToken", tokenInput.value.trim()));
+
+    function headers(json) {
+      const h = {};
+      if (json) h["Content-Type"] = "application/json";
+      const token = tokenInput.value.trim();
+      if (token) h.Authorization = "Bearer " + token;
+      return h;
+    }
+    async function api(path, opts = {}) {
+      const res = await fetch(path, { ...opts, headers: { ...headers(!!opts.body), ...(opts.headers || {}) } });
+      const text = await res.text();
+      let body = {};
+      try { body = text ? JSON.parse(text) : {}; } catch { body = { detail: text }; }
+      if (!res.ok) {
+        const detail = body.detail;
+        throw new Error(typeof detail === "string" ? detail : JSON.stringify(detail || res.status));
+      }
+      return body;
+    }
+    function esc(value) {
+      return String(value ?? "").replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
+    }
+
+    document.querySelectorAll("nav button").forEach((button) => {
+      button.addEventListener("click", () => {
+        document.querySelectorAll("nav button").forEach((item) => item.setAttribute("aria-selected", "false"));
+        document.querySelectorAll("section").forEach((item) => item.classList.remove("active"));
+        button.setAttribute("aria-selected", "true");
+        $(button.dataset.tab).classList.add("active");
+      });
+    });
+
+    let catalog = [];
+    function fillSelect(select, selected) {
+      select.innerHTML = catalog.map((item) => `<option value="${esc(item.id)}"${item.id === selected ? " selected" : ""}>${esc(item.label)}</option>`).join("");
+    }
+
+    function providerCard(item) {
+      const steps = (item.login_steps || []).map((step) => `<li>${esc(step)}</li>`).join("");
+      const project = item.needs_project ? `
+        <label>Proyecto Google Cloud</label>
+        <input data-field="project" value="${esc(item.project || "")}" />
+        <label>Región</label>
+        <input data-field="location" value="${esc(item.location || "us-central1")}" />` : "";
+      const localOnly = item.ready && (item.auth === "none" || (item.auth === "optional" && !item.api_key_set));
+      const pillClass = !item.ready ? "bad" : (localOnly ? "" : "ok");
+      const pillText = !item.ready ? "pendiente" : (localOnly ? "local" : "listo");
+      return `<article data-id="${esc(item.id)}">
+        <div class="row" style="margin-top:0;justify-content:space-between">
+          <strong>${esc(item.label)}</strong>
+          <span class="pill ${pillClass}">${pillText}</span>
+        </div>
+        <p class="sub">${esc(item.summary)}</p>
+        ${steps ? `<ol class="steps">${steps}</ol>` : ""}
+        <p class="sub">${esc(item.ready_reason)}${item.api_key_hint ? " · " + esc(item.api_key_hint) : ""} · origen ${esc(item.key_source)}</p>
+        ${item.docs_url ? `<p><a href="${esc(item.docs_url)}">Documentación</a></p>` : ""}
+        <label>Modelo</label>
+        <input data-field="model" value="${esc(item.model || "")}" />
+        <label>URL base</label>
+        <input data-field="base_url" value="${esc(item.base_url || "")}" placeholder="${esc(item.default_base_url || "https://…/v1")}" />
+        ${project}
+        <label>Clave (vacío = no cambiar)</label>
+        <input data-field="api_key" type="password" autocomplete="off" />
+        <label><input type="checkbox" data-field="enabled" ${item.enabled ? "checked" : ""}/> Activado</label>
+        <label><input type="checkbox" data-field="clear_api_key" /> Borrar clave guardada</label>
+        <div class="row">
+          <button type="button" class="primary" data-action="save">Guardar</button>
+          <button type="button" data-action="test">Probar</button>
+        </div>
+        <p class="sub" data-role="msg"></p>
+      </article>`;
+    }
+
+    async function loadProviders() {
+      const data = await api("/v1/providers");
+      catalog = data.providers;
+      fillSelect($("active"), data.active_reasoner);
+      fillSelect($("voiceProvider"), data.active_reasoner);
+      $("providerGrid").innerHTML = catalog.map(providerCard).join("");
+    }
+
+    $("providerGrid").addEventListener("click", async (event) => {
+      const button = event.target.closest("button");
+      if (!button) return;
+      const card = button.closest("article");
+      const id = card.dataset.id;
+      const msg = card.querySelector("[data-role=msg]");
+      const field = (name) => card.querySelector(`[data-field="${name}"]`);
+      try {
+        if (button.dataset.action === "save") {
+          const body = {
+            model: field("model").value,
+            base_url: field("base_url").value,
+            enabled: field("enabled").checked,
+            clear_api_key: field("clear_api_key").checked,
+          };
+          const project = field("project");
+          const location = field("location");
+          if (project) body.project = project.value;
+          if (location) body.location = location.value;
+          const secret = field("api_key").value.trim();
+          if (secret) body.api_key = secret;
+          const saved = await api("/v1/providers/" + id, { method: "PUT", body: JSON.stringify(body) });
+          const note = saved.export_line ? saved.export_line : "Guardado.";
+          const workflow = saved.workflow ? " Workflow de Claude: " + saved.workflow.written + " archivos escritos." : "";
+          $("banner").textContent = note + workflow;
+          await loadProviders();
+        } else if (button.dataset.action === "test") {
+          msg.textContent = "Probando…";
+          const result = await api("/v1/providers/" + id + "/test", { method: "POST" });
+          msg.textContent = result.detail || (result.ok ? "Correcto" : "Fallo");
+        }
+      } catch (err) {
+        msg.textContent = err.message;
+      }
+    });
+
+    $("saveActive").addEventListener("click", async () => {
+      await api("/v1/providers/active", { method: "POST", body: JSON.stringify({ provider_id: $("active").value }) });
+      $("banner").textContent = "Razonador activo: " + $("active").value;
+    });
+
+    function voiceBlock(voice) {
+      return `<article style="margin-bottom:10px">
+        <div class="row" style="margin-top:0;justify-content:space-between">
+          <strong>${esc(voice.name)}</strong>
+          <span class="pill">${esc(voice.language)} · ${esc(voice.source)}</span>
+        </div>
+        <p>${esc(voice.instruct)}</p>
+        <p class="sub">${esc(voice.reasoning || "")}</p>
+        <p class="sub"><code>${esc(voice.id)}</code> · ${esc(voice.sample_line || "")}</p>
+        <div class="row"><button type="button" class="danger" data-voice="${esc(voice.id)}">Quitar</button></div>
+      </article>`;
+    }
+
+    async function loadVoices() {
+      const data = await api("/v1/voices");
+      $("voiceList").innerHTML = data.voices.map(voiceBlock).join("");
+      const options = data.voices.map((voice) => `<option value="${esc(voice.id)}">${esc(voice.name)} · ${esc(voice.language)}</option>`).join("");
+      $("agentVoice").innerHTML = `<option value="">Sin voz</option>` + options;
+    }
+
+    $("voiceList").addEventListener("click", async (event) => {
+      const button = event.target.closest("button[data-voice]");
+      if (!button) return;
+      await api("/v1/voices/" + button.dataset.voice, { method: "DELETE" });
+      await loadVoices();
+    });
+
+    $("designBtn").addEventListener("click", async () => {
+      $("designError").textContent = "";
+      $("designResult").textContent = "Pensando la voz…";
+      try {
+        const voice = await api("/v1/voices/design", {
+          method: "POST",
+          body: JSON.stringify({
+            brief: $("brief").value,
+            language: $("voiceLanguage").value,
+            provider: $("voiceProvider").value,
+            save: true,
+          }),
+        });
+        $("designResult").innerHTML = voiceBlock(voice);
+        await loadVoices();
+      } catch (err) {
+        $("designResult").textContent = "";
+        $("designError").textContent = err.message;
+      }
+    });
+
+    $("manualSave").addEventListener("click", async () => {
+      await api("/v1/voices", {
+        method: "POST",
+        body: JSON.stringify({
+          name: $("manualName").value,
+          instruct: $("manualInstruct").value,
+          language: $("manualLanguage").value,
+        }),
+      });
+      await loadVoices();
+    });
+
+    async function loadRoster() {
+      const data = await api("/v1/office/roster");
+      $("roster").innerHTML = data.agents.map((agent) => `<tr>
+        <td>${esc(agent.clave)}<div class="sub">${esc(agent.department || "")}</div></td>
+        <td>${esc(agent.rol)}</td>
+        <td>${esc(agent.modelo)}</td>
+        <td><code>${esc(agent.voice_id || "—")}</code></td>
+        <td>${esc(agent.estado)}</td>
+        <td>
+          <button type="button" data-toggle="${esc(agent.id)}" data-estado="${esc(agent.estado)}">${agent.estado === "activo" ? "Desactivar" : "Activar"}</button>
+          <button type="button" class="danger" data-remove="${esc(agent.id)}">Quitar</button>
+        </td>
+      </tr>`).join("");
+    }
+
+    $("addAgent").addEventListener("click", async () => {
+      $("officeError").textContent = "";
+      try {
+        await api("/v1/office/agents", {
+          method: "POST",
+          body: JSON.stringify({
+            clave: $("clave").value,
+            rol: $("rol").value,
+            modelo: $("modelo").value,
+            department: $("department").value,
+            voice_id: $("agentVoice").value,
+            estado: "activo",
+          }),
+        });
+        await loadRoster();
+      } catch (err) {
+        $("officeError").textContent = err.message;
+      }
+    });
+
+    $("roster").addEventListener("click", async (event) => {
+      const toggle = event.target.closest("button[data-toggle]");
+      const remove = event.target.closest("button[data-remove]");
+      if (toggle) {
+        const estado = toggle.dataset.estado === "activo" ? "inactivo" : "activo";
+        await api("/v1/office/agents/" + toggle.dataset.toggle, { method: "PATCH", body: JSON.stringify({ estado }) });
+      } else if (remove) {
+        await api("/v1/office/agents/" + remove.dataset.remove, { method: "DELETE" });
+      } else return;
+      await loadRoster();
+    });
+
+    async function boot() {
+      try {
+        const health = await api("/health");
+        $("banner").textContent = health.tts_loaded ? "Motor TTS cargado." : "Motor TTS sin cargar (normal sin CUDA). Proveedores, voces y oficina siguen disponibles.";
+        await loadProviders();
+        await loadVoices();
+        await loadRoster();
+      } catch (err) {
+        $("banner").textContent = err.message;
+      }
+    }
+    boot();
+  </script>
+</body>
+</html>

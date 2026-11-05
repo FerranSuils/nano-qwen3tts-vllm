@@ -22,16 +22,26 @@ import logging
 import os
 import pickle
 import re
+import sys
 import time
 import threading
 import uuid
 import wave
 from contextlib import asynccontextmanager
 from pathlib import Path
+
+_REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
 import numpy as np
-import torch
 import multiprocessing as mp
+
+try:
+    import torch
+except ImportError:  # studio API can run before the GPU stack is installed
+    torch = None
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 import functools
@@ -62,6 +72,28 @@ _first_codes_threshold = FIRST_CHUNK_COUNT * FIRST_CHUNK_SIZE  # 8*2 = 16
 VOICE_CLONE_CODE_PREFIX_FRAMES = int(os.environ.get("VOICE_CLONE_CODE_PREFIX_FRAMES", "16"))
 
 logger = logging.getLogger(__name__)
+
+# Set once the multiprocess engines are up. Without a GPU the studio API still serves.
+_tts_ready = False
+
+
+def tts_engine_enabled() -> bool:
+    """Load Qwen weights on startup only when a GPU is there, unless overridden.
+
+    ``TTS_EAGER_LOAD=1`` forces the load. ``TTS_EAGER_LOAD=0`` keeps the process
+    as the provider / voice-design API so the web UI works on a CPU box.
+    """
+    flag = os.environ.get("TTS_EAGER_LOAD", "auto").strip().lower()
+    if flag in ("0", "false", "no", "off"):
+        return False
+    if flag in ("1", "true", "yes", "on"):
+        return True
+    if torch is None:
+        return False
+    try:
+        return bool(torch.cuda.is_available())
+    except Exception:
+        return False
 
 # Ensure log messages appear on console (works when run as uvicorn server:app or python server.py)
 if not logging.getLogger().handlers:
@@ -222,8 +254,16 @@ def _decode_window_fallback(tokenizer, batch_inputs: list) -> tuple[list, int]:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup: warm up model, start ZMQ tasks and decode worker. Shutdown: stop all."""
-    global _decode_queue, _decode_worker_task
+    global _decode_queue, _decode_worker_task, _tts_ready
     global _mp_decoder_request_queue, _mp_decoder_result_queue, _mp_decoder_process, _mp_decoder_ctx
+
+    if not tts_engine_enabled():
+        logger.info(
+            "TTS engine not loaded (no CUDA, or TTS_EAGER_LOAD=0). "
+            "Studio UI at /ui and provider APIs stay available."
+        )
+        yield
+        return
 
     interface = get_interface()
     get_tokenizer()
@@ -275,8 +315,10 @@ async def lifespan(app: FastAPI):
     logger.info("[warmup] batch=8 ...")
     await asyncio.gather(*[_warmup_one(warmup_req) for _ in range(16)])
     logger.info("[warmup] done.")
+    _tts_ready = True
 
     yield
+    _tts_ready = False
 
     # Stop decode worker
     if _decode_queue is not None:
@@ -308,15 +350,17 @@ class SpeechRequest(BaseModel):
     """Request body for speech generation."""
 
     text: str = Field(..., min_length=1, description="Text to synthesize")
-    language: str = Field(default="English", description="Language of the text")
-    speaker: str = Field(default="Vivian", description="Speaker name")
+    language: str | None = Field(default=None, description="Language of the text. Omitted means English, or the designed voice's language when voice_id is set.")
+    speaker: str = Field(default="Vivian", description="Speaker name, or a voice-clone pickle stem")
     volume: float = Field(default=1.0, ge=0.0, le=3.0, description="Volume gain (1.0 = normal, e.g. 1.5 = 50% louder)")
+    instruct: str | None = Field(default=None, description="VoiceDesign instruct. Used instead of a preset speaker.")
+    voice_id: str | None = Field(default=None, description="Designed voice id from /v1/voices. Supplies instruct and language.")
 
 
 @app.get("/health")
 async def health():
     """Health check endpoint."""
-    return {"status": "ok"}
+    return {"status": "ok", "tts_loaded": _tts_ready}
 
 
 @app.get("/voices")
@@ -574,7 +618,25 @@ async def generate_speech_stream(request: SpeechRequest):
         logger.info(f"[stream] request text length={len(request.text)} speaker={request.speaker!r} -> feeding to model")
         code_prefix: list = []
         prefix_len = 0
-        if is_voice_clone(request.speaker):
+        instruct = (request.instruct or "").strip()
+        language = request.language or "English"
+        if request.voice_id:
+            from studio.voices import get_voice
+            voice = get_voice(request.voice_id)
+            if voice is None:
+                raise RuntimeError(f"Designed voice {request.voice_id!r} not found")
+            if not instruct:
+                instruct = (voice.get("instruct") or "").strip()
+            if not request.language:
+                language = voice.get("language") or "Auto"
+        if instruct:
+            logger.info("[stream] voice design instruct length=%d language=%s", len(instruct), language)
+            gen = interface.generate_voice_design_async(
+                text=text,
+                instruct=instruct,
+                language=language,
+            )
+        elif is_voice_clone(request.speaker):
             voice_clone_prompt = load_voice_clone_prompt(request.speaker)
             code_prefix = get_voice_clone_code_prefix(voice_clone_prompt)
             prefix_len = len(code_prefix)
@@ -582,13 +644,13 @@ async def generate_speech_stream(request: SpeechRequest):
                 logger.info(f"[voice_clone] using {prefix_len} ref_code frames as decode prefix (first chunks will be skipped)")
             gen = interface.generate_voice_clone_async(
                 text=text,
-                language=request.language,
+                language=language,
                 voice_clone_prompt=voice_clone_prompt,
             )
         else:
             gen = interface.generate_custom_voice_async(
                 text=text,
-                language=request.language,
+                language=language,
                 speaker=request.speaker,
             )
 
@@ -737,7 +799,19 @@ async def generate_speech(request: SpeechRequest):
     Generate speech from text.
     Returns raw PCM 16-bit mono at 24 kHz (audio/L16).
     Uses async generation (multiprocess talker + predictor).
+
+    ``speaker`` keeps the previous CustomVoice / clone behaviour.
+    ``voice_id`` or ``instruct`` switches that request onto VoiceDesign.
     """
+    if request.voice_id:
+        from studio.voices import get_voice
+        if get_voice(request.voice_id) is None:
+            raise HTTPException(status_code=404, detail=f"Designed voice '{request.voice_id}' not found")
+    if not _tts_ready:
+        raise HTTPException(
+            status_code=503,
+            detail="TTS engine is not loaded. On a CUDA machine set TTS_EAGER_LOAD=1. Voice design stays available at /ui and POST /v1/voices/design.",
+        )
     try:
         return StreamingResponse(
             generate_speech_stream(request),
@@ -755,10 +829,35 @@ async def root():
         "name": "Qwen3-TTS API",
         "docs": "/docs",
         "health": "/health",
-        "voices": "GET /voices (list all available voices)",
-        "speech": "POST /v1/audio/speech (PCM16, 24 kHz mono)",
+        "preset_voices": "GET /voices (preset speakers and clones)",
+        "speech": "POST /v1/audio/speech (PCM16, 24 kHz mono). Optional voice_id or instruct for VoiceDesign.",
+        "studio": "/ui",
+        "providers": "GET /v1/providers",
+        "designed_voices": "GET /v1/voices",
+        "office": "https://ai.nordicbyte.co.uk/",
         "multiprocess_engines": True,
+        "tts_loaded": _tts_ready,
     }
+
+
+_cors = [
+    origin.strip()
+    for origin in os.environ.get(
+        "STUDIO_CORS_ORIGINS",
+        "https://ai.nordicbyte.co.uk,http://127.0.0.1:8000,http://localhost:8000",
+    ).split(",")
+    if origin.strip()
+]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_cors,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+from studio.router import router as studio_router
+
+app.include_router(studio_router)
 
 
 if __name__ == "__main__":
