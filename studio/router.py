@@ -7,6 +7,7 @@ from pathlib import Path
 
 import io
 import wave
+from pathlib import Path
 from urllib.parse import quote
 
 from fastapi import APIRouter, Header, HTTPException
@@ -253,6 +254,15 @@ def simulate_agent(agent_id: str, authorization: str | None = Header(default=Non
     if not available():
         raise HTTPException(status_code=503, detail="ZeroGPU no está configurado")
     text = office.sample_line(agent)
+    cache = Path(__file__).resolve().parents[1] / ".nano-qwen3tts" / "clips"
+    cache.mkdir(parents=True, exist_ok=True)
+    cached = cache / f"{agent_id}.wav"
+    if cached.is_file() and cached.stat().st_size > 44:
+        return Response(
+            content=cached.read_bytes(),
+            media_type="audio/wav",
+            headers={"X-Sample-Line": quote(text), "X-Voice-Cache": "hit"},
+        )
 
     class _Speech:
         pass
@@ -277,10 +287,12 @@ def simulate_agent(agent_id: str, authorization: str | None = Header(default=Non
         handle.setsampwidth(2)
         handle.setframerate(24000)
         handle.writeframes(pcm)
+    wav = buffer.getvalue()
+    cached.write_bytes(wav)
     return Response(
-        content=buffer.getvalue(),
+        content=wav,
         media_type="audio/wav",
-        headers={"X-Sample-Line": quote(text)},
+        headers={"X-Sample-Line": quote(text), "X-Voice-Cache": "miss"},
     )
 
 

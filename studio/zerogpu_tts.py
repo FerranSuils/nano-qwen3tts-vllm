@@ -12,6 +12,8 @@ import os
 import numpy as np
 
 TARGET_SAMPLE_RATE = 24000
+_client = None
+_client_space = ""
 
 
 def available() -> bool:
@@ -46,13 +48,21 @@ def _to_pcm16(audio: np.ndarray, sample_rate: int) -> bytes:
     return (pcm * 32767.0).astype(np.int16).tobytes()
 
 
+def _client_for_space():
+    global _client, _client_space
+    space = os.environ["ZEROGPU_SPACE"].strip()
+    if _client is None or _client_space != space:
+        from gradio_client import Client
+        token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN")
+        _client = Client(space, token=token)
+        _client_space = space
+    return _client
+
+
 def speech_pcm(request) -> bytes:
     text, instruct, language = _resolve(request)
-    from gradio_client import Client
-    space = os.environ["ZEROGPU_SPACE"].strip()
-    token = os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN")
-    client = Client(space, token=token)
-    result = client.predict(text, instruct, language, api_name="/synthesize")
+    client = _client_for_space()
+    result = client.predict(text, instruct[:500], language, api_name="/synthesize")
     path = result if isinstance(result, str) else result[0] if isinstance(result, (list, tuple)) else result
     if isinstance(path, tuple) and len(path) == 2 and isinstance(path[0], (int, float)):
         sample_rate, audio = path
