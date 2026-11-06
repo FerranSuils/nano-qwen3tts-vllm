@@ -66,6 +66,8 @@ def _clean_agent(raw: dict, *, agent_id: str | None = None) -> dict:
         "qa": bool(raw.get("qa")),
         "source": str(raw.get("source") or "manual")[:40],
         "brain_key": str(raw.get("brain_key") or "")[:80],
+        "elevenlabs_voice_id": str(raw.get("elevenlabs_voice_id") or "").strip()[:40],
+        "elevenlabs_name": str(raw.get("elevenlabs_name") or "").strip()[:100],
         "last_qa": raw.get("last_qa") if isinstance(raw.get("last_qa"), dict) else None,
     }
 

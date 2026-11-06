@@ -27,6 +27,7 @@ class StudioTest(unittest.TestCase):
         os.environ.pop("BRAIN_API_KEY", None)
         os.environ.pop("TESTSPRITE_API_KEY", None)
         os.environ.pop("TESTSPRITE_PROJECT_ID", None)
+        os.environ.pop("ELEVENLABS_API_KEY", None)
         from studio import brain_office
         brain_office.reset_cache()
         # Drop tokens injected by an earlier test in this process.
@@ -223,9 +224,16 @@ class StudioTest(unittest.TestCase):
         self.assertTrue(is_qa_agent(payload["agents"][0]))
         self.assertFalse(is_qa_agent(payload["agents"][1]))
         self.assertFalse(is_qa_agent({"key": "cfo-jurisdiccion-b", "role": "fiscalidad y estructura transfronteriza"}))
-        rows = agents_from_team(payload, [{"id": "eng-qa", "voice_id": "builtin-elena"}])
+        rows = agents_from_team(payload, [{
+            "id": "eng-qa",
+            "voice_id": "builtin-elena",
+            "elevenlabs_voice_id": "voice123",
+            "elevenlabs_name": "Aina · Ginebra",
+        }])
         self.assertEqual(rows[0]["clave"], "Aina")
         self.assertEqual(rows[0]["voice_id"], "builtin-elena")
+        self.assertEqual(rows[0]["elevenlabs_voice_id"], "voice123")
+        self.assertEqual(rows[0]["elevenlabs_name"], "Aina · Ginebra")
         self.assertTrue(rows[0]["qa"])
         self.assertEqual(rows[0]["department"], "Ingeniería")
         self.assertEqual(rows[1]["modelo"], "opus")
@@ -267,6 +275,78 @@ class StudioTest(unittest.TestCase):
             started = qa_testsprite.run_for_qa_agents()
         self.assertEqual(started["qa_agents"], ["Aina"])
         self.assertEqual(started["testsprite"]["accepted"], 1)
+
+    def test_elevenlabs_key_is_masked_and_flash_voice_is_stable(self):
+        from studio.elevenlabs import (
+            JARVIS_VOICE,
+            public_status,
+            redact,
+            save_key,
+            voice_for_agent,
+            voice_for_speech,
+        )
+        os.environ["ELEVENLABS_API_KEY"] = "sk_test_secret_value"
+        view = public_status()
+        self.assertTrue(view["ready"])
+        self.assertEqual(view["model"], "eleven_flash_v2_5")
+        self.assertEqual(view["key_source"], "env")
+        self.assertNotIn("sk_test_secret_value", json.dumps(view))
+        self.assertTrue(view["api_key_hint"].endswith("alue"))
+        os.environ.pop("ELEVENLABS_API_KEY", None)
+        saved = save_key("sk_file_secret_9876")
+        self.assertEqual(saved["key_source"], "file")
+        self.assertNotIn("sk_file_secret_9876", json.dumps(saved))
+        self.assertIn("API_KEY", redact("fallo sk_file_secret_9876"))
+        jarvis = voice_for_agent({"id": "jarvis", "clave": "Jarvis", "voice_id": ""})
+        self.assertEqual(jarvis, JARVIS_VOICE)
+        custom = voice_for_agent({"id": "jarvis", "clave": "Jarvis", "elevenlabs_voice_id": "Napy7oPOT7uxUgaYsCYg"})
+        self.assertEqual(custom, "Napy7oPOT7uxUgaYsCYg")
+        from studio.elevenlabs import nearest_voice
+        created = [
+            {"gender": "woman", "accent_i": 0, "voice_id": "mx", "name": "México"},
+            {"gender": "woman", "accent_i": 16, "voice_id": "ny", "name": "Nueva York"},
+            {"gender": "man", "accent_i": 1, "voice_id": "ba", "name": "Buenos Aires"},
+        ]
+        self.assertEqual(nearest_voice("woman", 1, created)["voice_id"], "mx")
+        self.assertEqual(nearest_voice("man", 17, created)["voice_id"], "ba")
+        woman = voice_for_speech("builtin-elena", None)
+        man = voice_for_speech("builtin-hugo", None)
+        self.assertNotEqual(woman, man)
+        self.assertEqual(woman, voice_for_speech("builtin-elena", None))
+
+    def test_simulate_uses_elevenlabs_without_leaking_the_key(self):
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+        from studio.router import router
+        app = FastAPI()
+        app.include_router(router)
+        client = TestClient(app)
+        auth = {"Authorization": "Bearer bk_user"}
+        self.enterContext(mock.patch("studio.brain_office.identify", return_value={"email": "ferran@example.com", "user_id": "1"}))
+        self.enterContext(mock.patch("studio.brain_office.sync_team", side_effect=__import__("studio.brain_office", fromlist=["BrainOfficeError"]).BrainOfficeError("offline")))
+        os.environ["ELEVENLABS_API_KEY"] = "sk_test_secret_value"
+        created = client.post("/v1/office/agents", headers=auth, json={
+            "clave": "Aina",
+            "rol": "prueba el audio",
+            "department": "Ingeniería",
+        })
+        self.assertEqual(created.status_code, 200, created.text)
+        pcm = (b"\x00\x01" * 100)
+
+        def fake_pcm(text, voice_id):
+            self.assertIn("Aina", text)
+            self.assertTrue(voice_id)
+            return pcm
+
+        with mock.patch("studio.elevenlabs.speech_pcm", fake_pcm):
+            spoken = client.post(f"/v1/office/agents/{created.json()['id']}/simulate", headers=auth, json={})
+        self.assertEqual(spoken.status_code, 200, spoken.text)
+        self.assertEqual(spoken.headers["x-tts-backend"], "elevenlabs")
+        self.assertNotIn("sk_test_secret_value", spoken.text)
+        self.assertIn("Aina", spoken.headers["x-sample-line"])
+        status = client.get("/v1/speech/engine", headers=auth)
+        self.assertTrue(status.json()["ready"])
+        self.assertNotIn("sk_test_secret_value", status.text)
 
     def test_connection_test_uses_whoami_for_huggingface(self):
         from studio.providers import save_provider, test_provider

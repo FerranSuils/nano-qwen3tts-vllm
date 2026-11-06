@@ -75,6 +75,7 @@ def empty_state() -> dict:
         "brain_api_key": "",
         "testsprite_api_key": "",
         "testsprite_project_id": "",
+        "elevenlabs_api_key": "",
     }
 
 

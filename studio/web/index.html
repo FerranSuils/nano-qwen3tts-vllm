@@ -169,7 +169,7 @@
       </div>
       <div class="panel">
         <h2>Voz de un agente</h2>
-        <p class="sub">Simular dice una frase de su rol y su área. Si ya está guardada, suena al momento. Una frase nueva en ZeroGPU tarda unos 6 segundos: la GPU gratuita se engancha en cada frase.</p>
+        <p class="sub" id="speechEngine">Simular dice una frase de su rol y su área con ElevenLabs Flash. La primera frase llega en menos de un segundo; si ya está guardada, suena al momento.</p>
         <audio id="agentAudio" hidden></audio>
         <div class="split">
           <div>
@@ -241,7 +241,7 @@ curl -X POST http://127.0.0.1:8000/v1/audio/speech \
       if (!res.ok) {
         const detail = body.detail;
         const message = typeof detail === "string" ? detail : JSON.stringify(detail || res.status);
-        throw new Error(message.replace(/hf_[A-Za-z0-9]+/g, "HF_TOKEN").replace(/export\s+HF_TOKEN=\S+/gi, "HF_TOKEN está en el servidor"));
+        throw new Error(message.replace(/hf_[A-Za-z0-9]+/g, "HF_TOKEN").replace(/sk_[A-Za-z0-9]+/g, "ELEVENLABS_API_KEY").replace(/export\s+HF_TOKEN=\S+/gi, "HF_TOKEN está en el servidor"));
       }
       return body;
     }
@@ -410,6 +410,7 @@ curl -X POST http://127.0.0.1:8000/v1/audio/speech \
       await loadVoices();
     });
 
+    let speechReady = false;
     function paintOffice(data) {
       const link = data.connection || {};
       const qa = (data.agents || []).filter((agent) => agent.qa).map((agent) => agent.clave);
@@ -424,10 +425,10 @@ curl -X POST http://127.0.0.1:8000/v1/audio/speech \
         <td>${esc(agent.rol)}</td>
         <td>${esc(agent.department || "")}</td>
         <td>${esc(agent.modelo)}</td>
-        <td><code>${esc(agent.voice_id || "—")}</code></td>
+        <td><code>${esc(agent.voice_id || "—")}</code>${agent.elevenlabs_name ? `<div class="sub">${esc(agent.elevenlabs_name)}</div>` : ""}</td>
         <td>${esc(agent.estado)}${agent.last_qa ? `<div class="sub">TestSprite ${esc(agent.last_qa.accepted)} casos</div>` : ""}</td>
         <td>
-          <button type="button" data-simulate="${esc(agent.id)}" ${agent.voice_id ? "" : "disabled"}>Simular</button>
+          <button type="button" data-simulate="${esc(agent.id)}" ${agent.voice_id || speechReady ? "" : "disabled"}>Simular</button>
           <button type="button" data-toggle="${esc(agent.id)}" data-estado="${esc(agent.estado)}">${agent.estado === "activo" ? "Desactivar" : "Activar"}</button>
           ${agent.source === "brain" ? "" : `<button type="button" class="danger" data-remove="${esc(agent.id)}">Quitar</button>`}
         </td>
@@ -435,7 +436,15 @@ curl -X POST http://127.0.0.1:8000/v1/audio/speech \
     }
 
     async function loadRoster() {
-      paintOffice(await api("/v1/office/roster"));
+      const [data, speech] = await Promise.all([api("/v1/office/roster"), api("/v1/speech/engine")]);
+      speechReady = !!speech.ready;
+      const engine = $("speechEngine");
+      if (engine) {
+        engine.textContent = speech.ready
+          ? "Simular habla con ElevenLabs Flash, en español. La primera frase llega en menos de un segundo; si ya está guardada, suena al momento."
+          : "ElevenLabs no está configurado en el servidor (ELEVENLABS_API_KEY). Simular usa la voz diseñada.";
+      }
+      paintOffice(data);
     }
 
     $("syncOffice").addEventListener("click", async () => {
