@@ -22,8 +22,8 @@ from scripts.cast_office_voices import ACCENTS, cast_all, gender_of
 from studio.elevenlabs import (
     ElevenLabsError,
     account_voices,
+    choose_linked_voice,
     create_designed_voice,
-    nearest_voice,
 )
 from studio.elevenlabs import slot_usage
 from studio.store import load_state, studio_home, update_state
@@ -108,6 +108,8 @@ def _covered(voices: list[dict]) -> dict:
     found = {}
     for voice in voices:
         name = voice.get("name") or ""
+        if "jarvis" in name.lower() or name.startswith("Hombre · España") or name.startswith("Mujer · España"):
+            found[name] = voice
         if "jarvis" in name.lower():
             found["jarvis"] = voice
         if " · " not in name:
@@ -167,6 +169,20 @@ def link() -> dict:
         created.append({**cast, "voice_id": voice_id})
         print(f"created {cast['name']} {voice_id} slots {used}/{limit}")
 
+    for voice in account_voices():
+        name = voice.get("name") or ""
+        if name not in ("Hombre · España", "Mujer · España") and "jarvis" not in name.lower():
+            continue
+        if any(item.get("voice_id") == voice.get("voice_id") for item in created):
+            continue
+        created.append({
+            "clave": "Jarvis" if "jarvis" in name.lower() else "",
+            "name": name,
+            "voice_id": voice["voice_id"],
+            "gender": "woman" if name.startswith("Mujer") else "man",
+            "accent_i": 17,
+        })
+
     if not created:
         raise SystemExit("No se pudo guardar ninguna voz")
 
@@ -175,12 +191,7 @@ def link() -> dict:
             primary = by_clave.get(agent["clave"])
             if primary is None:
                 continue
-            owned = next((
-                item for item in created
-                if item["name"].startswith(agent["clave"] + " ·")
-                or (agent["clave"].lower() == "jarvis" and "jarvis" in item["name"].lower())
-            ), None)
-            chosen = owned or nearest_voice(primary["gender"], primary["accent_i"], created)
+            chosen = choose_linked_voice(agent["clave"], primary["gender"], primary["accent_i"], created)
             agent["elevenlabs_voice_id"] = chosen["voice_id"]
             agent["elevenlabs_name"] = chosen["name"]
         for voice in state.get("voices") or []:

@@ -172,6 +172,43 @@ def resolvable(voice_id: str) -> bool:
     return bool(voice_id) and (voice_id in _ALL or voice_id in linked_ids())
 
 
+SPAIN_MEN = frozenset({"bruno", "marc", "diego", "roberto", "xavier", "óscar", "oscar"})
+SPAIN_WOMEN = frozenset({"carla", "sara"})
+
+
+def choose_linked_voice(clave: str, gender: str, accent_i: int, created: list[dict]) -> dict:
+    """Jarvis stays on Jarvis. The Spain designs are only for the Spain seats."""
+    low = (clave or "").strip().lower()
+
+    def named(prefix: str) -> dict | None:
+        prefix = prefix.lower()
+        return next((item for item in created if str(item.get("name") or "").lower().startswith(prefix)), None)
+
+    if low == "jarvis":
+        hit = named("jarvis")
+        if hit:
+            return hit
+    if low in SPAIN_MEN:
+        hit = named("hombre · españa")
+        if hit:
+            return hit
+    if low in SPAIN_WOMEN:
+        hit = named("mujer · españa")
+        if hit:
+            return hit
+    owned = next((
+        item for item in created
+        if str(item.get("name") or "").startswith(f"{clave} ·") and "jarvis" not in str(item.get("name") or "").lower()
+    ), None)
+    if owned:
+        return owned
+    pool = [
+        item for item in created
+        if "jarvis" not in str(item.get("name") or "").lower() and "españa" not in str(item.get("name") or "").lower()
+    ]
+    return nearest_voice(gender, accent_i, pool or created)
+
+
 def nearest_voice(gender: str, accent_i: int, created: list[dict]) -> dict:
     """Pick the saved design of the same gender whose accent sits closest on the cast wheel."""
     pool = [item for item in created if item.get("gender") == gender] or list(created)
@@ -289,6 +326,10 @@ def account_voices() -> list[dict]:
 def slot_usage() -> tuple[int, int]:
     payload = _api_json("GET", "/user/subscription")
     return int(payload.get("voice_slots_used") or 0), int(payload.get("voice_limit") or 0)
+
+
+def delete_voice(voice_id: str) -> None:
+    _api_json("DELETE", f"/voices/{voice_id}")
 
 
 def create_designed_voice(*, name: str, description: str, text: str, seed: int, labels: dict) -> str:

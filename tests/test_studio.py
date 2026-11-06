@@ -309,6 +309,17 @@ class StudioTest(unittest.TestCase):
         ]
         self.assertEqual(nearest_voice("woman", 1, created)["voice_id"], "mx")
         self.assertEqual(nearest_voice("man", 17, created)["voice_id"], "ba")
+        from studio.elevenlabs import choose_linked_voice
+        designs = created + [
+            {"name": "Jarvis · doblaje Iron Man", "voice_id": "jarvis", "gender": "man", "accent_i": 17},
+            {"name": "Hombre · España", "voice_id": "es-m", "gender": "man", "accent_i": 17},
+            {"name": "Mujer · España", "voice_id": "es-f", "gender": "woman", "accent_i": 17},
+            {"name": "Marta · Ciudad de México", "voice_id": "mx", "gender": "woman", "accent_i": 0},
+        ]
+        self.assertEqual(choose_linked_voice("Jarvis", "man", 17, designs)["voice_id"], "jarvis")
+        self.assertEqual(choose_linked_voice("Bruno", "man", 13, designs)["voice_id"], "es-m")
+        self.assertEqual(choose_linked_voice("Carla", "woman", 17, designs)["voice_id"], "es-f")
+        self.assertEqual(choose_linked_voice("Ingrid", "woman", 2, designs)["voice_id"], "mx")
         woman = voice_for_speech("builtin-elena", None)
         man = voice_for_speech("builtin-hugo", None)
         self.assertNotEqual(woman, man)
